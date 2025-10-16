@@ -18,12 +18,28 @@ const EXCLUDE_DIRS = new Set([
   "build",
 ])
 
+const EXCLUDE_FILES = new Set([
+  ".env",
+  ".env.local",
+  ".env.development.local",
+  ".env.test.local",
+  ".env.production.local",
+  "package-lock.json",
+  "bun.lock",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+])
+
 const EXCLUDE_FILE_PREFIXES = [
   ".DS_Store",
 ]
 
 // Утилита проверки, что путь должен быть исключён
 function shouldExclude(relPath: string) {
+  // Проверяем точное имя файла
+  const fileName = path.basename(relPath)
+  if (EXCLUDE_FILES.has(fileName)) return true
+  
   // Исключаем скрытые директории верхнего уровня явно перечисленные в EXCLUDE_DIRS
   const segments = relPath.split(path.sep)
   for (let i = 0; i < segments.length; i++) {
