@@ -109,6 +109,103 @@ async function getCurrentTree(octokit: Octokit, owner: string, repo: string, bra
   }
 }
 
+// Новый helper: получить SHA всех файлов из GitHub
+async function getGithubFileShas(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<Map<string, string>> {
+  const fileMap = new Map<string, string>()
+  
+  try {
+    const treeData = await getCurrentTree(octokit, owner, repo, branch)
+    if (!treeData) return fileMap
+    
+    // Получаем полное дерево рекурсивно
+    const { data: tree } = await octokit.git.getTree({
+      owner,
+      repo,
+      tree_sha: treeData.baseTreeSha,
+      recursive: "true",
+    })
+    
+    // Заполняем карту: путь -> SHA
+    for (const item of tree.tree) {
+      if (item.type === "blob" && item.path && item.sha) {
+        fileMap.set(item.path, item.sha)
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching GitHub file tree:", error)
+  }
+  
+  return fileMap
+}
+
+// Новый helper: вычислить SHA файла (как это делает Git)
+function calculateGitBlobSha(content: string, encoding: "utf-8" | "base64"): string {
+  const crypto = require("crypto")
+  let buffer: Buffer
+  
+  if (encoding === "base64") {
+    buffer = Buffer.from(content, "base64")
+  } else {
+    buffer = Buffer.from(content, "utf-8")
+  }
+  
+  // Git формат: "blob <size>\0<content>"
+  const header = `blob ${buffer.length}\0`
+  const store = Buffer.concat([Buffer.from(header), buffer])
+  
+  return crypto.createHash("sha1").update(store).digest("hex")
+}
+
+// Новый helper: сравнить локальные файлы с GitHub и вернуть изменённые
+async function compareFiles(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branch: string,
+  localFiles: FileStructure[]
+): Promise<{
+  changed: FileStructure[]
+  new: FileStructure[]
+  unchanged: FileStructure[]
+  deleted: string[]
+}> {
+  const githubFiles = await getGithubFileShas(octokit, owner, repo, branch)
+  
+  const changed: FileStructure[] = []
+  const newFiles: FileStructure[] = []
+  const unchanged: FileStructure[] = []
+  const localPaths = new Set<string>()
+  
+  for (const file of localFiles) {
+    localPaths.add(file.path)
+    const localSha = calculateGitBlobSha(file.content, file.encoding || "utf-8")
+    const githubSha = githubFiles.get(file.path)
+    
+    if (!githubSha) {
+      newFiles.push(file)
+    } else if (localSha !== githubSha) {
+      changed.push(file)
+    } else {
+      unchanged.push(file)
+    }
+  }
+  
+  // Найти удалённые файлы (есть на GitHub, нет локально)
+  const deleted: string[] = []
+  for (const [path] of githubFiles) {
+    if (!localPaths.has(path)) {
+      deleted.push(path)
+    }
+  }
+  
+  return { changed, new: newFiles, unchanged, deleted }
+}
+
 // Helper to create or update files in GitHub using Git Data API
 async function uploadFilesToGithub(
   octokit: Octokit,
@@ -244,9 +341,9 @@ async function commitZipAsSingleFile(
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const formData = await request.formData()
+    const formData = await req.formData()
     const githubToken = formData.get("githubToken") as string
     const owner = formData.get("owner") as string
     const repo = formData.get("repo") as string
@@ -259,6 +356,7 @@ export async function POST(request: NextRequest) {
     const replaceAll = formData.get("replaceAll") === "true"
     const singleFile = formData.get("singleFile") === "true"
     const finalizeSync = formData.get("finalizeSync") === "true"
+    const compareOnly = formData.get("compareOnly") === "true"
 
     if (!githubToken || !owner || !repo) {
       return NextResponse.json(
@@ -328,6 +426,80 @@ export async function POST(request: NextRequest) {
         console.error("Finalize sync error:", error)
         return NextResponse.json({ success: true, message: "Синхронизация завершена (без финального коммита)" })
       }
+    }
+
+    // --- НОВЫЙ РЕЖИМ: только сравнение (не загружаем) ---
+    if (compareOnly) {
+      let files: FileStructure[] = []
+      
+      if (autoMode) {
+        try {
+          const projectRoot = process.cwd()
+          files = await readProjectFiles(projectRoot)
+        } catch (error: any) {
+          return NextResponse.json(
+            { error: "Ошибка чтения файлов проекта", details: error?.message },
+            { status: 500 }
+          )
+        }
+      } else if (zipFile) {
+        const arrayBuffer = await zipFile.arrayBuffer()
+        const zip = await JSZip.loadAsync(arrayBuffer)
+        const filePromises: Promise<void>[] = []
+
+        zip.forEach((relativePath, file) => {
+          if (file.dir) return
+          if (
+            relativePath.includes("node_modules/") ||
+            relativePath.includes(".git/") ||
+            relativePath.includes(".next/") ||
+            relativePath.startsWith("__MACOSX/") ||
+            relativePath === ".DS_Store"
+          ) {
+            return
+          }
+
+          const promise = (async () => {
+            if (isBinaryFile(relativePath)) {
+              const content = await file.async("base64")
+              files.push({ path: relativePath, content, encoding: "base64" })
+            } else {
+              const content = await file.async("string")
+              files.push({ path: relativePath, content, encoding: "utf-8" })
+            }
+          })()
+
+          filePromises.push(promise)
+        })
+
+        await Promise.all(filePromises)
+      }
+      
+      if (files.length === 0) {
+        return NextResponse.json(
+          { error: "Нет файлов для сравнения" },
+          { status: 400 }
+        )
+      }
+      
+      const comparison = await compareFiles(octokit, owner, repo, branch, files)
+      
+      return NextResponse.json({
+        success: true,
+        comparison: {
+          changed: comparison.changed.map(f => f.path),
+          new: comparison.new.map(f => f.path),
+          unchanged: comparison.unchanged.map(f => f.path),
+          deleted: comparison.deleted,
+        },
+        summary: {
+          changedCount: comparison.changed.length,
+          newCount: comparison.new.length,
+          unchangedCount: comparison.unchanged.length,
+          deletedCount: comparison.deleted.length,
+          totalLocal: files.length,
+        },
+      })
     }
 
     // --- НОВЫЙ РЕЖИМ: загрузка одного файла ---
