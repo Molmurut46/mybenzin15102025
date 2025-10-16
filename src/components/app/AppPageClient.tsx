@@ -540,7 +540,7 @@ export const AppPageClient = () => {
           relativePath.includes(".next/") ||
           relativePath.startsWith("__MACOSX/") ||
           relativePath === ".DS_Store" ||
-          fileName.startsWith(".env") || // Игнорировать все .env* файлы
+          (fileName.startsWith(".env") && fileName !== ".env.example") || // Разрешить .env.example
           fileName === ".npmrc" ||
           fileName === ".yarnrc" ||
           fileName === ".yarnrc.yml" ||
@@ -609,7 +609,7 @@ export const AppPageClient = () => {
             relativePath.includes(".next/") ||
             relativePath.startsWith("__MACOSX/") ||
             relativePath === ".DS_Store" ||
-            fileName.startsWith(".env") ||
+            (fileName.startsWith(".env") && fileName !== ".env.example") ||
             fileName === ".npmrc" ||
             fileName === ".yarnrc" ||
             fileName === ".yarnrc.yml" ||
@@ -719,7 +719,7 @@ export const AppPageClient = () => {
             relativePath.includes(".next/") ||
             relativePath.startsWith("__MACOSX/") ||
             relativePath === ".DS_Store" ||
-            fileName.startsWith(".env") ||
+            (fileName.startsWith(".env") && fileName !== ".env.example") ||
             fileName === ".npmrc" ||
             fileName === ".yarnrc" ||
             fileName === ".yarnrc.yml" ||
