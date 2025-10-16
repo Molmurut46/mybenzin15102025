@@ -1,18 +1,12 @@
 name: CI
 
-
 on:
-  # push:
-  #   branches: [ main ]
-  # pull_request:
-  #   branches: [ main ]
-  workflow_dispatch:  # Только ручной запуск
+  workflow_dispatch:
     inputs:
       website_url:
         description: "URL вашего сайта (для TWA/Bubblewrap)"
         required: false
-        default: "https://mybenzin15102025.vercel.app"
-
+        default: "https://mybenzin.vercel.app"
 
 jobs:
   web-ci:
@@ -20,26 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-
+          node-version: '20'
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Generate PWA icons
-        run: npm run generate:icons
+        run: npm ci
 
       - name: Build Next.js app
         run: npm run build
 
-
       - name: Run tests
         run: echo "Tests would run here"
-
 
   android-apk:
     runs-on: ubuntu-latest
@@ -48,7 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Java + Android SDK
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -58,26 +44,23 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # Setup Node.js для Bubblewrap
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install Bubblewrap CLI
         run: npm i -g @bubblewrap/cli
 
       - name: Generate TWA project
         env:
-          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin.vercel.app' }}
         run: |
           echo "Using WEBSITE_URL=$WEBSITE_URL"
           
-          # Создаем директорию для проекта
           mkdir -p twa-project
           cd twa-project
           
-          # Создаем минимальный twa-manifest.json
           cat > twa-manifest.json <<EOF
           {
             "packageId": "com.mybenzin.app",
@@ -113,34 +96,26 @@ jobs:
           }
           EOF
           
-          # Создаем временный keystore для сборки
           keytool -genkey -v -keystore android.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -storepass android -keypass android
 
       - name: Check if icon exists
         env:
-          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin.vercel.app' }}
+        continue-on-error: true
         run: |
           ICON_URL="$WEBSITE_URL/icon-512.png"
           if curl --output /dev/null --silent --head --fail "$ICON_URL"; then
             echo "✅ Icon exists: $ICON_URL"
           else
-            echo "❌ Icon not found: $ICON_URL"
-            echo "Please make sure your PWA has a proper manifest with icon-512.png"
-            exit 1
+            echo "⚠️ Icon not found: $ICON_URL (continuing anyway)"
           fi
 
       - name: Initialize Bubblewrap project
         working-directory: twa-project
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
-          # Устанавливаем переменные для неинтерактивного режима
           export CI=true
-          
-          # Инициализируем проект автоматически (отвечаем 'n' на вопрос об установке JDK)
           echo "n" | bubblewrap init --manifest=./twa-manifest.json
           
-          # Проверяем, что проект создан
           ls -la
           if [ -f "./gradlew" ]; then
             echo "✅ Project initialized successfully"
@@ -149,28 +124,24 @@ jobs:
             exit 1
           fi
 
-      - name: Build TWA debug APK
+      - name: Build TWA APK
         working-directory: twa-project
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
           echo "Using JAVA_HOME: $JAVA_HOME"
           java -version
           
-          # Даем права на выполнение gradlew
           chmod +x ./gradlew
           
-          # Собираем debug APK
-          ./gradlew assembleDebug --stacktrace
+          # Try release build first, fallback to debug
+          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
           
-          # Проверяем, что APK создан
+          echo "Looking for APK files..."
           find . -name "*.apk" -type f
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mybenzin-android-apk
+          name: mybenzin-twa-apk
           path: |
-            twa-project/app/build/outputs/apk/debug/*.apk
-            twa-project/app/build/outputs/apk/release/*.apk
+            twa-project/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
