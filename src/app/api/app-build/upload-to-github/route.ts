@@ -4,7 +4,8 @@ import JSZip from "jszip"
 import fs from "fs"
 import path from "path"
 
-export const maxDuration = 60
+export const dynamic = "force-dynamic"
+export const maxDuration = 300
 export const runtime = "nodejs"
 
 interface FileStructure {
