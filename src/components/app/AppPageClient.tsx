@@ -5,13 +5,28 @@ import { useRouter } from "next/navigation"
 import { useSession } from "@/lib/auth-client"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2, Clock } from "lucide-react"
+import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2, Clock, FileSearch, FilePlus, FileEdit, FileX } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import JSZip from "jszip"
+
+interface FileComparison {
+  changed: string[]
+  new: string[]
+  unchanged: string[]
+  deleted: string[]
+}
+
+interface ComparisonSummary {
+  changedCount: number
+  newCount: number
+  unchangedCount: number
+  deletedCount: number
+  totalLocal: number
+}
 
 export const AppPageClient = () => {
   const { data: session, isPending } = useSession()
@@ -41,7 +56,6 @@ export const AppPageClient = () => {
   const [autoRefresh, setAutoRefresh] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [errorSnippet, setErrorSnippet] = useState<string | null>(null)
-  // --- repo settings overrides ---
   const [owner, setOwner] = useState("")
   const [repo, setRepo] = useState("")
   const [refName, setRefName] = useState("")
@@ -55,15 +69,19 @@ export const AppPageClient = () => {
   const [autoUploadMode, setAutoUploadMode] = useState<"auto" | "manual">("auto")
   const isMountedRef = useRef(true)
   const [downloadingProject, setDownloadingProject] = useState(false)
-  // new: zip upload controls
   const [uploadAsZip, setUploadAsZip] = useState(true)
   const [zipName, setZipName] = useState("")
-  // new: manual folder upload
   const [manualFolderMode, setManualFolderMode] = useState(false)
   const [selectedFolderFiles, setSelectedFolderFiles] = useState<File[]>([])
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, currentFile: "" })
-  const [batchDelay, setBatchDelay] = useState(100) // ms between files
+  const [batchDelay, setBatchDelay] = useState(100)
+  
+  // New: comparison state
+  const [isComparing, setIsComparing] = useState(false)
+  const [comparison, setComparison] = useState<FileComparison | null>(null)
+  const [comparisonSummary, setComparisonSummary] = useState<ComparisonSummary | null>(null)
+  const [showComparison, setShowComparison] = useState(false)
   
   const isPrivileged = useMemo(() => session?.user?.email === "89045219234@mail.ru", [session?.user?.email])
 
@@ -78,43 +96,51 @@ export const AppPageClient = () => {
   }, [isPending, session?.user, isPrivileged, router])
 
   useEffect(() => {
-    // load all settings from localStorage
     if (typeof window === "undefined") return
     const token = localStorage.getItem("gh_upload_token") || ""
     setGithubToken(token)
 
-    // Загрузить настройки из .env, если в localStorage ничего нет
     const loadEnvSettings = async () => {
       try {
         const res = await fetch("/api/app-build/github-settings")
         if (res.ok) {
           const envSettings = await res.json()
           
-          // token - ВАЖНО: сохраняем в localStorage ТОЛЬКО если его там нет
           if (!token && envSettings.token) {
             setGithubToken(envSettings.token)
             localStorage.setItem("gh_upload_token", envSettings.token)
             toast.success("Токен GitHub загружен из .env")
           }
           
-          // owner/repo/branch - обновляем только если локально пусто
+          const o = localStorage.getItem("gh_owner") || ""
+          const r = localStorage.getItem("gh_repo") || ""
+          const rf = localStorage.getItem("gh_ref") || ""
+          const wf = localStorage.getItem("gh_workflowId") || ""
+          
           if (!o && envSettings.owner) {
             setOwner(envSettings.owner)
             localStorage.setItem("gh_owner", envSettings.owner)
+          } else if (o) {
+            setOwner(o)
           }
           if (!r && envSettings.repo) {
             setRepo(envSettings.repo)
             localStorage.setItem("gh_repo", envSettings.repo)
+          } else if (r) {
+            setRepo(r)
           }
           if (!rf && (envSettings.branch || envSettings.ref)) {
             const ref = envSettings.branch || envSettings.ref
             setRefName(ref)
             localStorage.setItem("gh_ref", ref)
+          } else if (rf) {
+            setRefName(rf)
           }
-          // workflowId
           if (!wf && envSettings.workflowId) {
             setWorkflowId(envSettings.workflowId)
             localStorage.setItem("gh_workflowId", envSettings.workflowId)
+          } else if (wf) {
+            setWorkflowId(wf)
           }
         }
       } catch (error) {
@@ -125,7 +151,27 @@ export const AppPageClient = () => {
     loadEnvSettings()
   }, [])
 
-  // Генерация имени архива по умолчанию
+  useEffect(() => {
+    isMountedRef.current = true
+    
+    const loadStatus = async () => {
+      if (session?.user && isPrivileged && isMountedRef.current) {
+        try {
+          await fetchStatus()
+        } catch (error) {
+          console.error("Failed to load initial status:", error)
+        }
+      }
+    }
+    
+    loadStatus()
+    
+    return () => {
+      isMountedRef.current = false
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [session?.user, isPrivileged])
+
   const makeDefaultZipName = () => {
     const repoName = (repo?.trim() || "mybenzin15102025").replace(/\s+/g, "-")
     const d = new Date()
@@ -164,7 +210,6 @@ export const AppPageClient = () => {
       setRun(data.run)
       setArtifacts(data.artifacts || [])
       setErrorSnippet(data.errorSnippet || null)
-      // подхватываем используемые значения из .env, чтобы показать их в настройках (если локальные оверрайды пустые)
       if (data?.used) {
         const { owner: uo, repo: ur, ref: uf, workflowId: uw } = data.used as { owner?: string; repo?: string; ref?: string; workflowId?: string }
         if (!owner && uo) setOwner(uo)
@@ -172,7 +217,6 @@ export const AppPageClient = () => {
         if (!refName && uf) setRefName(uf)
         if (!workflowId && uw) setWorkflowId(String(uw))
       }
-      // Автоотключение автообновления, когда билд завершён
       const finished = data.run && (data.run.status === "completed" || data.run.conclusion)
       if (finished && intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -196,7 +240,6 @@ export const AppPageClient = () => {
       if (repo) body.repo = repo
       if (refName) body.ref = refName
       if (workflowId) body.workflowId = workflowId
-      // remove unsupported workflow_dispatch inputs to avoid 422 errors
       const res = await fetch("/api/app-build/trigger", {
         method: "POST",
         headers: {
@@ -213,15 +256,12 @@ export const AppPageClient = () => {
         if (Array.isArray(data?.workflows)) {
           setWorkflowHints(data.workflows as Array<{ id: number; name: string; path: string; state: string }>)
         }
-        // If backend detected missing workflow_dispatch, surface friendly fix with snippet
         if (data?.reason === "Workflow is missing workflow_dispatch trigger" && data?.fix?.ymlSnippet) {
           setErrorMsg(`${msg}\n\n${data?.fix?.message || "Добавьте блок workflow_dispatch в YAML"}`)
-          // Attach snippet into errorSnippet block so user can expand and copy
           setErrorSnippet(String(data.fix.ymlSnippet))
         }
         throw new Error(msg)
       }
-      // подхватываем использованные значения, если пришли с сервера
       if (data?.used) {
         const { owner: uo, repo: ur, ref: uf, workflowId: uw } = data.used as { owner?: string; repo?: string; ref?: string; workflowId?: string }
         if (uo) setOwner(uo)
@@ -230,7 +270,6 @@ export const AppPageClient = () => {
         if (uw) setWorkflowId(String(uw))
       }
       setWorkflowHints(null)
-      // После удачного запуска — включаем автообновление
       await fetchStatus()
       startAutoRefresh()
     } catch (e: any) {
@@ -267,36 +306,6 @@ export const AppPageClient = () => {
       toast.success(`Файл выбран: ${file.name}`)
     }
   }
-
-  useEffect(() => {
-    isMountedRef.current = true
-    
-    // Загружаем статус при входе, если доступ есть
-    const loadStatus = async () => {
-      if (session?.user && isPrivileged && isMountedRef.current) {
-        try {
-          await fetchStatus()
-        } catch (error) {
-          console.error("Failed to load initial status:", error)
-        }
-      }
-    }
-    
-    loadStatus()
-    
-    return () => {
-      isMountedRef.current = false
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user, isPrivileged])
-
-  // Check if error is related to missing environment variables or credentials
-  const isMissingEnvError = errorMsg?.includes("Missing environment variables") || errorMsg?.includes("Missing:")
-  const isBadCredentialsError = errorMsg?.includes("Bad credentials") || errorMsg?.includes("401")
-
-  const isBuilding = run && (run.status === "queued" || run.status === "in_progress")
-  const isFinished = run && (run.status === "completed" || !!run.conclusion)
 
   const handleDownload = async (id: number, filenameHint?: string) => {
     try {
@@ -355,7 +364,6 @@ export const AppPageClient = () => {
       formData.append("repo", repo)
       formData.append("branch", refName || "main")
 
-      // Передаём режим упаковки согласно переключателю
       formData.append("uploadAsZip", String(uploadAsZip))
       if (uploadAsZip) {
         const finalZipName = (zipName?.trim() || makeDefaultZipName())
@@ -370,12 +378,10 @@ export const AppPageClient = () => {
           formData.append("projectZip", selectedZipFile)
         }
         if (manualFolderMode) {
-          // Force non-zip on server and mark manual folder mode
           formData.set("uploadAsZip", "false")
           formData.append("manualFolder", "true")
           formData.append("replaceAll", "true")
           selectedFolderFiles.forEach((file) => {
-            // @ts-ignore webkitRelativePath exists in Chromium-based browsers
             const rel = (file as any).webkitRelativePath || file.name
             formData.append("folderFiles", file)
             formData.append("paths[]", rel)
@@ -438,6 +444,61 @@ export const AppPageClient = () => {
     }
   }
 
+  // NEW: Compare files with GitHub
+  const handleCompare = async () => {
+    if (!githubToken || !owner || !repo) {
+      toast.error("Заполните все настройки GitHub")
+      return
+    }
+
+    setIsComparing(true)
+    setComparison(null)
+    setComparisonSummary(null)
+    
+    try {
+      toast.info("Сравнение файлов с GitHub...")
+      const res = await fetch("/api/app-build/download-project")
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        throw new Error(text || "Не удалось получить ZIP проекта")
+      }
+      const blob = await res.blob()
+      
+      const formData = new FormData()
+      formData.append("githubToken", githubToken)
+      formData.append("owner", owner)
+      formData.append("repo", repo)
+      formData.append("branch", refName || "main")
+      formData.append("compareOnly", "true")
+      formData.append("autoMode", "false")
+      formData.append("projectZip", new File([blob], "project.zip"))
+
+      const response = await fetch("/api/app-build/upload-to-github", {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "Ошибка сравнения")
+      }
+
+      setComparison(data.comparison)
+      setComparisonSummary(data.summary)
+      setShowComparison(true)
+      
+      const total = data.summary.changedCount + data.summary.newCount
+      toast.success(`Найдено изменений: ${total} файлов`)
+    } catch (error: any) {
+      console.error("Compare error:", error)
+      toast.error(error.message || "Ошибка сравнения с GitHub")
+    } finally {
+      setIsComparing(false)
+    }
+  }
+
+  // UPDATED: Sync with changes only
   const handleSync = async () => {
     if (!githubToken || !owner || !repo) {
       toast.error("Заполните все настройки GitHub")
@@ -448,7 +509,6 @@ export const AppPageClient = () => {
     setSyncProgress({ current: 0, total: 0, currentFile: "" })
     
     try {
-      // Шаг 1: Скачать ZIP проекта
       toast.info("Загрузка архива проекта...")
       const res = await fetch("/api/app-build/download-project")
       if (!res.ok) {
@@ -457,30 +517,27 @@ export const AppPageClient = () => {
       }
       const blob = await res.blob()
       
-      // Шаг 2: Распаковать ZIP в браузере
       toast.info("Распаковка архива...")
       const zip = await JSZip.loadAsync(blob)
       
-      const files: File[] = []
-      const paths: string[] = []
+      const allFiles: File[] = []
+      const allPaths: string[] = []
       
-      // Конвертируем JSZip файлы в File объекты
       const filePromises: Promise<void>[] = []
       
       zip.forEach((relativePath, file) => {
         if (file.dir) return
         
-        // Пропускаем системные и ненужные файлы
+        // Извлекаем имя файла
+        const fileName = relativePath.split("/").pop() || ""
+        
         if (
           relativePath.includes("node_modules/") ||
           relativePath.includes(".git/") ||
           relativePath.includes(".next/") ||
           relativePath.startsWith("__MACOSX/") ||
           relativePath === ".DS_Store" ||
-          relativePath === ".env" ||
-          relativePath === ".env.local" ||
-          relativePath === ".env.production" ||
-          relativePath === ".env.development" ||
+          fileName.startsWith(".env") || // Игнорировать все .env* файлы
           relativePath === "bun.lock" ||
           relativePath === "package-lock.json"
         ) {
@@ -489,10 +546,9 @@ export const AppPageClient = () => {
 
         const promise = (async () => {
           const blob = await file.async("blob")
-          const fileName = relativePath.split("/").pop() || relativePath
           const fileObj = new File([blob], fileName, { type: blob.type })
-          files.push(fileObj)
-          paths.push(relativePath)
+          allFiles.push(fileObj)
+          allPaths.push(relativePath)
         })()
 
         filePromises.push(promise)
@@ -500,61 +556,141 @@ export const AppPageClient = () => {
       
       await Promise.all(filePromises)
       
-      if (files.length === 0) {
+      if (allFiles.length === 0) {
         throw new Error("ZIP не содержит файлов проекта")
       }
       
-      toast.info(`Подготовлено файлов: ${files.length}`)
-      setSyncProgress({ current: 0, total: files.length, currentFile: "" })
+      toast.info(`Подготовлено файлов: ${allFiles.length}`)
       
-      // Шаг 3: Загрузить на GitHub постепенно
-      toast.info("Загрузка на GitHub...")
-      
-      let uploadedCount = 0
-      
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const path = paths[i]
-        
-        setSyncProgress({ current: i + 1, total: files.length, currentFile: path })
-        
-        const formData = new FormData()
-        formData.append("githubToken", githubToken)
-        formData.append("owner", owner)
-        formData.append("repo", repo)
-        formData.append("branch", refName || "main")
-        formData.append("singleFile", "true")
-        formData.append("file", file)
-        formData.append("path", path)
-        
-        try {
-          const response = await fetch("/api/app-build/upload-to-github", {
-            method: "POST",
-            body: formData,
-          })
-          
-          const data = await response.json()
-          
-          if (!response.ok) {
-            console.error(`Failed to upload ${path}:`, data.error)
-            // Продолжаем загрузку остальных файлов
-          } else {
-            uploadedCount++
-          }
-        } catch (error) {
-          console.error(`Error uploading ${path}:`, error)
-          // Продолжаем загрузку остальных файлов
-        }
-        
-        // Задержка между файлами
-        if (i < files.length - 1 && batchDelay > 0) {
-          await new Promise(resolve => setTimeout(resolve, batchDelay))
-        }
-      }
+      // Сравнение с GitHub для определения изменённых файлов
+      toast.info("Сравнение с GitHub...")
+      const compareFormData = new FormData()
+      compareFormData.append("githubToken", githubToken)
+      compareFormData.append("owner", owner)
+      compareFormData.append("repo", repo)
+      compareFormData.append("branch", refName || "main")
+      compareFormData.append("compareOnly", "true")
+      compareFormData.append("autoMode", "false")
+      compareFormData.append("projectZip", new File([blob], "project.zip"))
 
-      toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${files.length} файлов`)
+      const compareRes = await fetch("/api/app-build/upload-to-github", {
+        method: "POST",
+        body: compareFormData,
+      })
+
+      if (!compareRes.ok) {
+        // Если сравнение не удалось, загружаем все файлы
+        toast.warning("Не удалось сравнить файлы, загружаем всё")
+        const files = allFiles
+        const paths = allPaths
+        setSyncProgress({ current: 0, total: files.length, currentFile: "" })
+        
+        let uploadedCount = 0
+        
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          const path = paths[i]
+          
+          setSyncProgress({ current: i + 1, total: files.length, currentFile: path })
+          
+          const formData = new FormData()
+          formData.append("githubToken", githubToken)
+          formData.append("owner", owner)
+          formData.append("repo", repo)
+          formData.append("branch", refName || "main")
+          formData.append("singleFile", "true")
+          formData.append("file", file)
+          formData.append("path", path)
+          
+          try {
+            const response = await fetch("/api/app-build/upload-to-github", {
+              method: "POST",
+              body: formData,
+            })
+            
+            const data = await response.json()
+            
+            if (response.ok) {
+              uploadedCount++
+            }
+          } catch (error) {
+            console.error(`Error uploading ${path}:`, error)
+          }
+          
+          if (i < files.length - 1 && batchDelay > 0) {
+            await new Promise(resolve => setTimeout(resolve, batchDelay))
+          }
+        }
+
+        toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${files.length} файлов`)
+      } else {
+        const compareData = await compareRes.json()
+        const comparison = compareData.comparison as FileComparison
+        
+        // Определяем файлы для загрузки (новые + изменённые)
+        const filesToUpload = [...comparison.new, ...comparison.changed]
+        
+        if (filesToUpload.length === 0) {
+          toast.success("✅ Все файлы актуальны, загрузка не требуется")
+          setIsSyncing(false)
+          setSyncProgress({ current: 0, total: 0, currentFile: "" })
+          return
+        }
+        
+        toast.info(`Найдено изменений: ${filesToUpload.length} файлов (${comparison.new.length} новых, ${comparison.changed.length} изменённых)`)
+        setSyncProgress({ current: 0, total: filesToUpload.length, currentFile: "" })
+        
+        let uploadedCount = 0
+        
+        // Загружаем только изменённые файлы
+        for (let i = 0; i < filesToUpload.length; i++) {
+          const filePath = filesToUpload[i]
+          const fileIndex = allPaths.indexOf(filePath)
+          
+          if (fileIndex === -1) {
+            console.error(`File not found in archive: ${filePath}`)
+            continue
+          }
+          
+          const file = allFiles[fileIndex]
+          
+          setSyncProgress({ current: i + 1, total: filesToUpload.length, currentFile: filePath })
+          
+          const formData = new FormData()
+          formData.append("githubToken", githubToken)
+          formData.append("owner", owner)
+          formData.append("repo", repo)
+          formData.append("branch", refName || "main")
+          formData.append("singleFile", "true")
+          formData.append("file", file)
+          formData.append("path", filePath)
+          
+          try {
+            const response = await fetch("/api/app-build/upload-to-github", {
+              method: "POST",
+              body: formData,
+            })
+            
+            const data = await response.json()
+            
+            if (response.ok) {
+              uploadedCount++
+            } else {
+              console.error(`Failed to upload ${filePath}:`, data.error)
+            }
+          } catch (error) {
+            console.error(`Error uploading ${filePath}:`, error)
+          }
+          
+          if (i < filesToUpload.length - 1 && batchDelay > 0) {
+            await new Promise(resolve => setTimeout(resolve, batchDelay))
+          }
+        }
+
+        toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${filesToUpload.length} файлов (пропущено ${comparison.unchanged.length} без изменений)`)
+      }
       
-      // Финальный коммит для завершения синхронизации
+      // Финальный коммит
       const formData = new FormData()
       formData.append("githubToken", githubToken)
       formData.append("owner", owner)
@@ -591,6 +727,11 @@ export const AppPageClient = () => {
   if (!session?.user || !isPrivileged) {
     return null
   }
+
+  const isMissingEnvError = errorMsg?.includes("Missing environment variables") || errorMsg?.includes("Missing:")
+  const isBadCredentialsError = errorMsg?.includes("Bad credentials") || errorMsg?.includes("401")
+  const isBuilding = run && (run.status === "queued" || run.status === "in_progress")
+  const isFinished = run && (run.status === "completed" || !!run.conclusion)
 
   return (
     <div className="min-h-screen bg-background py-4 sm:py-8 px-4">
@@ -879,13 +1020,140 @@ export const AppPageClient = () => {
             )}
           </Button>
 
+          {/* NEW: Comparison Section */}
+          <div className="pt-2 border-t">
+            <div className="mb-3 text-sm text-muted-foreground">
+              <strong>Проверка изменений:</strong> сравнивает локальные файлы с GitHub и показывает список изменённых файлов
+            </div>
+            
+            <Button
+              onClick={handleCompare}
+              disabled={isComparing || !githubToken || !owner || !repo}
+              variant="outline"
+              className="w-full gap-2 mb-3"
+              size="lg"
+            >
+              {isComparing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Сравнение...
+                </>
+              ) : (
+                <>
+                  <FileSearch className="w-4 h-4" />
+                  Проверить изменения
+                </>
+              )}
+            </Button>
+
+            {/* Comparison Results */}
+            {showComparison && comparisonSummary && (
+              <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-sm">Результаты сравнения</h4>
+                  <button
+                    onClick={() => setShowComparison(false)}
+                    className="text-xs text-muted-foreground hover:underline"
+                  >
+                    Скрыть
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                  <div className="p-2 bg-green-100 dark:bg-green-900 rounded">
+                    <div className="flex items-center gap-1 text-green-800 dark:text-green-100">
+                      <FilePlus className="w-4 h-4" />
+                      <span className="font-semibold">{comparisonSummary.newCount}</span>
+                    </div>
+                    <div className="text-xs text-green-700 dark:text-green-200">Новые</div>
+                  </div>
+                  
+                  <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded">
+                    <div className="flex items-center gap-1 text-blue-800 dark:text-blue-100">
+                      <FileEdit className="w-4 h-4" />
+                      <span className="font-semibold">{comparisonSummary.changedCount}</span>
+                    </div>
+                    <div className="text-xs text-blue-700 dark:text-blue-200">Изменённые</div>
+                  </div>
+                  
+                  <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded">
+                    <div className="flex items-center gap-1 text-gray-800 dark:text-gray-100">
+                      <Check className="w-4 h-4" />
+                      <span className="font-semibold">{comparisonSummary.unchangedCount}</span>
+                    </div>
+                    <div className="text-xs text-gray-700 dark:text-gray-200">Без изменений</div>
+                  </div>
+                  
+                  <div className="p-2 bg-red-100 dark:bg-red-900 rounded">
+                    <div className="flex items-center gap-1 text-red-800 dark:text-red-100">
+                      <FileX className="w-4 h-4" />
+                      <span className="font-semibold">{comparisonSummary.deletedCount}</span>
+                    </div>
+                    <div className="text-xs text-red-700 dark:text-red-200">Удалённые</div>
+                  </div>
+                </div>
+
+                {comparison && (
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {comparison.new.length > 0 && (
+                      <details className="text-sm">
+                        <summary className="cursor-pointer font-medium text-green-800 dark:text-green-200 hover:underline">
+                          Новые файлы ({comparison.new.length})
+                        </summary>
+                        <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
+                          {comparison.new.map((path, i) => (
+                            <li key={i} className="flex items-center gap-1">
+                              <FilePlus className="w-3 h-3 text-green-600" />
+                              {path}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                    
+                    {comparison.changed.length > 0 && (
+                      <details className="text-sm">
+                        <summary className="cursor-pointer font-medium text-blue-800 dark:text-blue-200 hover:underline">
+                          Изменённые файлы ({comparison.changed.length})
+                        </summary>
+                        <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
+                          {comparison.changed.map((path, i) => (
+                            <li key={i} className="flex items-center gap-1">
+                              <FileEdit className="w-3 h-3 text-blue-600" />
+                              {path}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                    
+                    {comparison.deleted.length > 0 && (
+                      <details className="text-sm">
+                        <summary className="cursor-pointer font-medium text-red-800 dark:text-red-200 hover:underline">
+                          Удалённые файлы ({comparison.deleted.length})
+                        </summary>
+                        <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
+                          {comparison.deleted.map((path, i) => (
+                            <li key={i} className="flex items-center gap-1">
+                              <FileX className="w-3 h-3 text-red-600" />
+                              {path}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Sync Button - обходит ограничения Vercel */}
           <div className="pt-2 border-t">
             <div className="mb-2 text-sm text-muted-foreground">
               <strong>Синхронизация (рекомендуется для Vercel):</strong> скачивает проект, распаковывает в браузере и загружает файлы постепенно на GitHub
             </div>
             
-            {/* Batch delay setting */}
             <div className="mb-3 space-y-2">
               <Label htmlFor="batch-delay" className="flex items-center gap-2">
                 <Clock className="w-4 h-4" />
@@ -906,7 +1174,6 @@ export const AppPageClient = () => {
               </p>
             </div>
 
-            {/* Progress bar */}
             {isSyncing && syncProgress.total > 0 && (
               <div className="mb-3 space-y-2 p-3 bg-muted rounded-lg">
                 <div className="flex items-center justify-between text-sm">
