@@ -1,0 +1,96 @@
+name: Build Android APK with Capacitor
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+      - '!.github/workflows/android.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app (static export)
+        run: npm run build
+        env:
+          NODE_ENV: production
+          CAPACITOR_BUILD: true
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL || 'https://mybenzin.vercel.app' }}
+
+      - name: Verify out directory
+        run: |
+          echo "Checking out directory..."
+          ls -la out/ || echo "❌ out/ directory not found"
+          echo "✅ Static export completed"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Add Android platform
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            echo "Android platform already exists"
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Verify Android project
+        run: |
+          echo "Checking android directory..."
+          ls -la android/
+          echo "Checking gradlew..."
+          ls -la android/gradlew
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build Android APK
+        run: cd android && ./gradlew assembleRelease --stacktrace
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+
+      - name: Verify APK
+        run: |
+          echo "Looking for APK files..."
+          find android/app/build/outputs -name "*.apk" -type f
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mybenzin-capacitor-app
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Upload AAB artifact (if exists)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mybenzin-capacitor-bundle
+          path: android/app/build/outputs/bundle/release/*.aab
+          retention-days: 30
+        continue-on-error: true
