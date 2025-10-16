@@ -28,13 +28,6 @@ interface ComparisonSummary {
   totalLocal: number
 }
 
-interface SyncResults {
-  successful: string[]
-  failed: Array<{ path: string; error: string }>
-  skipped: string[]
-  deleted: string[]
-}
-
 export const AppPageClient = () => {
   const { data: session, isPending } = useSession()
   const router = useRouter()
@@ -92,10 +85,6 @@ export const AppPageClient = () => {
   
   // New: delete files option
   const [deleteRemovedFiles, setDeleteRemovedFiles] = useState(false)
-  
-  // NEW: sync results state
-  const [syncResults, setSyncResults] = useState<SyncResults | null>(null)
-  const [showSyncResults, setShowSyncResults] = useState(false)
   
   const isPrivileged = useMemo(() => session?.user?.email === "89045219234@mail.ru", [session?.user?.email])
 
@@ -512,7 +501,7 @@ export const AppPageClient = () => {
     }
   }
 
-  // UPDATED: Sync with changes only
+  // UPDATED: Sync with automatic before/after comparison
   const handleSync = async () => {
     if (!githubToken || !owner || !repo) {
       toast.error("Заполните все настройки GitHub")
@@ -521,17 +510,12 @@ export const AppPageClient = () => {
 
     setIsSyncing(true)
     setSyncProgress({ current: 0, total: 0, currentFile: "" })
-    setSyncResults(null)
-    setShowSyncResults(false)
-    
-    const results: SyncResults = {
-      successful: [],
-      failed: [],
-      skipped: [],
-      deleted: []
-    }
     
     try {
+      // STEP 1: Run comparison BEFORE sync
+      toast.info("📊 Проверка изменений перед синхронизацией...")
+      await handleCompare()
+      
       toast.info("Загрузка архива проекта...")
       const res = await fetch("/api/app-build/download-project")
       if (!res.ok) {
@@ -656,17 +640,11 @@ export const AppPageClient = () => {
               body: formData,
             })
             
-            const data = await response.json()
-            
             if (response.ok) {
               uploadedCount++
-              results.successful.push(relativePath)
-            } else {
-              results.failed.push({ path: relativePath, error: data.error || "Unknown error" })
             }
           } catch (error: any) {
             console.error(`Error uploading ${relativePath}:`, error)
-            results.failed.push({ path: relativePath, error: error.message || "Network error" })
           }
           
           if (uploadedCount < files.length - 1 && batchDelay > 0) {
@@ -678,8 +656,6 @@ export const AppPageClient = () => {
       } else {
         const compareData = await compareRes.json()
         const comparison = compareData.comparison as FileComparison
-        
-        results.skipped = comparison.unchanged
         
         const filesToUpload = [...comparison.new, ...comparison.changed]
         
@@ -702,7 +678,6 @@ export const AppPageClient = () => {
             
             if (deleteRes.ok) {
               const deleteData = await deleteRes.json()
-              results.deleted = comparison.deleted
               toast.success(`Удалено ${deleteData.deletedCount || comparison.deleted.length} файлов`)
             } else {
               toast.error("Ошибка удаления файлов")
@@ -718,10 +693,12 @@ export const AppPageClient = () => {
             ? "✅ Все файлы актуальны"
             : "✅ Все файлы актуальны, загрузка не требуется"
           toast.success(message)
-          setSyncResults(results)
-          setShowSyncResults(true)
           setIsSyncing(false)
           setSyncProgress({ current: 0, total: 0, currentFile: "" })
+          
+          // STEP 2: Run comparison AFTER sync (even if nothing uploaded)
+          toast.info("📊 Проверка результатов синхронизации...")
+          await handleCompare()
           return
         }
         
@@ -776,18 +753,14 @@ export const AppPageClient = () => {
               body: formData,
             })
             
-            const data = await response.json()
-            
             if (response.ok) {
               uploadedCount++
-              results.successful.push(relativePath)
             } else {
+              const data = await response.json()
               console.error(`Failed to upload ${relativePath}:`, data.error)
-              results.failed.push({ path: relativePath, error: data.error || "Unknown error" })
             }
           } catch (error: any) {
             console.error(`Error uploading ${relativePath}:`, error)
-            results.failed.push({ path: relativePath, error: error.message || "Network error" })
           }
           
           if (uploadedCount < filesToUpload.length - 1 && batchDelay > 0) {
@@ -820,9 +793,9 @@ export const AppPageClient = () => {
         }
       }
       
-      // NEW: Show sync results
-      setSyncResults(results)
-      setShowSyncResults(true)
+      // STEP 3: Run comparison AFTER sync to show results
+      toast.info("📊 Проверка результатов синхронизации...")
+      await handleCompare()
     } catch (error: any) {
       console.error("Sync error:", error)
       toast.error(error.message || "Ошибка синхронизации с GitHub")
@@ -1358,129 +1331,6 @@ export const AppPageClient = () => {
                 </>
               )}
             </Button>
-
-            {/* NEW: Sync Results Display */}
-            {showSyncResults && syncResults && (
-              <div className="mt-4 space-y-3 p-4 bg-muted/50 rounded-lg border-2 border-primary/20">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold text-sm flex items-center gap-2">
-                    <Check className="w-4 h-4 text-green-600" />
-                    Результаты синхронизации
-                  </h4>
-                  <button
-                    onClick={() => setShowSyncResults(false)}
-                    className="text-xs text-muted-foreground hover:underline"
-                  >
-                    Скрыть
-                  </button>
-                </div>
-                
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-                  <div className="p-2 bg-green-100 dark:bg-green-900 rounded">
-                    <div className="flex items-center gap-1 text-green-800 dark:text-green-100">
-                      <Check className="w-4 h-4" />
-                      <span className="font-semibold">{syncResults.successful.length}</span>
-                    </div>
-                    <div className="text-xs text-green-700 dark:text-green-200">Загружено</div>
-                  </div>
-                  
-                  <div className="p-2 bg-red-100 dark:bg-red-900 rounded">
-                    <div className="flex items-center gap-1 text-red-800 dark:text-red-100">
-                      <AlertCircle className="w-4 h-4" />
-                      <span className="font-semibold">{syncResults.failed.length}</span>
-                    </div>
-                    <div className="text-xs text-red-700 dark:text-red-200">Ошибки</div>
-                  </div>
-                  
-                  <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded">
-                    <div className="flex items-center gap-1 text-gray-800 dark:text-gray-100">
-                      <Check className="w-4 h-4" />
-                      <span className="font-semibold">{syncResults.skipped.length}</span>
-                    </div>
-                    <div className="text-xs text-gray-700 dark:text-gray-200">Пропущено</div>
-                  </div>
-                  
-                  <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded">
-                    <div className="flex items-center gap-1 text-purple-800 dark:text-purple-100">
-                      <FileX className="w-4 h-4" />
-                      <span className="font-semibold">{syncResults.deleted.length}</span>
-                    </div>
-                    <div className="text-xs text-purple-700 dark:text-purple-200">Удалено</div>
-                  </div>
-                </div>
-
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {syncResults.successful.length > 0 && (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer font-medium text-green-800 dark:text-green-200 hover:underline">
-                        ✅ Успешно загружены ({syncResults.successful.length})
-                      </summary>
-                      <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
-                        {syncResults.successful.map((path, i) => (
-                          <li key={i} className="flex items-center gap-1">
-                            <Check className="w-3 h-3 text-green-600" />
-                            {path}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                  
-                  {syncResults.failed.length > 0 && (
-                    <details open className="text-sm">
-                      <summary className="cursor-pointer font-medium text-red-800 dark:text-red-200 hover:underline">
-                        ❌ Ошибки загрузки ({syncResults.failed.length})
-                      </summary>
-                      <ul className="mt-1 ml-4 text-xs space-y-1">
-                        {syncResults.failed.map((item, i) => (
-                          <li key={i} className="p-2 bg-red-50 dark:bg-red-950/30 rounded">
-                            <div className="flex items-center gap-1 text-red-800 dark:text-red-200 font-medium">
-                              <AlertCircle className="w-3 h-3" />
-                              {item.path}
-                            </div>
-                            <div className="text-red-600 dark:text-red-400 ml-4 mt-0.5">
-                              {item.error}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                  
-                  {syncResults.skipped.length > 0 && (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer font-medium text-gray-800 dark:text-gray-200 hover:underline">
-                        📋 Пропущены (без изменений) ({syncResults.skipped.length})
-                      </summary>
-                      <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
-                        {syncResults.skipped.slice(0, 20).map((path, i) => (
-                          <li key={i}>{path}</li>
-                        ))}
-                        {syncResults.skipped.length > 20 && (
-                          <li className="text-xs italic">... и ещё {syncResults.skipped.length - 20} файлов</li>
-                        )}
-                      </ul>
-                    </details>
-                  )}
-                  
-                  {syncResults.deleted.length > 0 && (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer font-medium text-purple-800 dark:text-purple-200 hover:underline">
-                        🗑️ Удалены из репозитория ({syncResults.deleted.length})
-                      </summary>
-                      <ul className="mt-1 ml-4 text-xs space-y-0.5 text-muted-foreground">
-                        {syncResults.deleted.map((path, i) => (
-                          <li key={i} className="flex items-center gap-1">
-                            <FileX className="w-3 h-3 text-purple-600" />
-                            {path}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
