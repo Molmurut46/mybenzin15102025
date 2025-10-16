@@ -1,0 +1,1 @@
+ALTER TABLE `user_profiles` ADD `default_deviation_percent` real DEFAULT 0;
