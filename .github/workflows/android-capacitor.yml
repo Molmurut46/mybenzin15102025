@@ -30,6 +30,7 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
+          CAPACITOR_BUILD: true
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL || 'https://mybenzin.vercel.app' }}
 
       - name: Setup JDK 17
