@@ -1,5 +1,6 @@
 name: CI
 
+
 on:
   push:
     branches: [ main ]
@@ -12,25 +13,31 @@ on:
         required: false
         default: "https://mybenzin15102025.vercel.app"
 
+
 jobs:
   web-ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
+
       - name: Install dependencies
         run: npm install --legacy-peer-deps
+
 
       - name: Build Next.js app
         run: npm run build
 
+
       - name: Run tests
         run: echo "Tests would run here"
+
 
   android-apk:
     runs-on: ubuntu-latest
@@ -39,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Java + Android SDK
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -48,6 +56,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # Setup Node.js для Bubblewrap
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,12 +65,14 @@ jobs:
       - name: Install Bubblewrap CLI
         run: npm i -g @bubblewrap/cli
 
+      # Создаем TWA проект
       - name: Generate TWA project
         env:
           WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
         run: |
           echo "Using WEBSITE_URL=$WEBSITE_URL"
           
+          # Создаем минимальный twa.manifest.json
           mkdir -p twa-project
           cat > twa-project/twa-manifest.json <<EOF
           {
@@ -77,6 +88,7 @@ jobs:
             "startUrl": "/",
             "iconUrl": "$WEBSITE_URL/icon-512.png",
             "maskableIconUrl": "$WEBSITE_URL/icon-512.png",
+            "monochromeIconUrl": "$WEBSITE_URL/icon-512.png",
             "splashScreenFadeOutDuration": 300,
             "signingKey": {
               "path": "./android.keystore",
@@ -101,16 +113,28 @@ jobs:
       - name: Initialize Bubblewrap project
         working-directory: twa-project
         run: |
+          # Инициализируем проект из манифеста
           bubblewrap init --manifest=./twa-manifest.json || true
 
       - name: Build TWA debug APK
         working-directory: twa-project
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
-          bubblewrap build --skipPwaValidation || true
+          # Устанавливаем переменные окружения для неинтерактивного режима
+          export CI=true
           
+          # Используем уже установленный JDK 17
+          echo "Using JAVA_HOME: $JAVA_HOME"
+          java -version
+          
+          # Собираем debug APK через Gradle напрямую (пропускаем bubblewrap build)
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
+          else
+            echo "Error: gradlew not found after bubblewrap init"
+            exit 1
           fi
 
       - name: Upload APK artifact
@@ -118,6 +142,6 @@ jobs:
         with:
           name: mybenzin-android-apk
           path: |
-            twa-project/app-release-signed.apk
-            twa-project/app/build/outputs/apk/**/*.apk
+            twa-project/app/build/outputs/apk/debug/*.apk
+            twa-project/app/build/outputs/apk/release/*.apk
           if-no-files-found: warn
