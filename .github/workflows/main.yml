@@ -1,6 +1,5 @@
 name: CI
 
-
 on:
   push:
     branches: [ main ]
@@ -8,21 +7,76 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-    
-    - name: Install dependencies
-      run: npm install --legacy-peer-deps
-    
-    - name: Run tests
-      run: echo "Tests would run here"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Если у вас есть JS/Node часть в репозитории — оставьте эти шаги.
+      # Если нет — можно удалить блок Setup Node.js / Install dependencies / Run tests.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run tests
+        run: echo "Tests would run here"
+
+      # Java и Android SDK для сборки Gradle
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses
+
+      # Кэш Gradle для ускорения
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+        working-directory: ./
+
+      # Сборка релизных артефактов (APK и AAB)
+      - name: Build Android (assembleRelease + bundleRelease)
+        run: |
+          ./gradlew assembleRelease
+          ./gradlew bundleRelease
+
+      # Загрузка артефактов (APK/AAB) как GitHub Artifacts
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-${{ github.run_number }}
+          path: |
+            **/build/outputs/apk/release/*.apk
+            **/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 7
