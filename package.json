@@ -6,10 +6,20 @@
         "dev": "next dev --turbopack",
         "build": "next build",
         "start": "next start",
-        "lint": "next lint"
+        "lint": "next lint",
+        "cap:init": "cap init",
+        "cap:add:android": "cap add android",
+        "cap:sync": "cap sync",
+        "cap:open:android": "cap open android",
+        "cap:build:android": "npm run build && cap sync && cd android && ./gradlew assembleRelease",
+        "android:dev": "cap run android",
+        "android:build": "npm run build && cap sync android"
     },
     "dependencies": {
         "@babel/parser": "^7.28.4",
+        "@capacitor/android": "^7.4.3",
+        "@capacitor/cli": "^7.4.3",
+        "@capacitor/core": "^7.4.3",
         "@headlessui/react": "^2.2.9",
         "@heroicons/react": "^2.2.0",
         "@hookform/resolvers": "^5.1.1",
