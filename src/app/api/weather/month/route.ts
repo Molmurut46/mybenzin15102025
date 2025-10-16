@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
+export const dynamic = "force-dynamic"
+
 // Координаты Курска
 const KURSK_LAT = 51.73
 const KURSK_LON = 36.19
