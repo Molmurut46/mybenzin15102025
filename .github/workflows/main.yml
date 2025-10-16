@@ -112,30 +112,28 @@ jobs:
 
       - name: Initialize Bubblewrap project
         working-directory: twa-project
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
-          # Инициализируем проект из манифеста
-          bubblewrap init --manifest=./twa-manifest.json || true
+          # Автоматически отвечаем "n" на вопрос о JDK
+          echo "n" | bubblewrap init --manifest=./twa-manifest.json || true
 
       - name: Build TWA debug APK
         working-directory: twa-project
         env:
           JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
-          # Устанавливаем переменные окружения для неинтерактивного режима
-          export CI=true
-          
-          # Используем уже установленный JDK 17
-          echo "Using JAVA_HOME: $JAVA_HOME"
-          java -version
-          
-          # Собираем debug APK через Gradle напрямую (пропускаем bubblewrap build)
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
-          else
+          # Проверяем, что gradlew создан
+          if [ ! -f "./gradlew" ]; then
             echo "Error: gradlew not found after bubblewrap init"
+            echo "Listing twa-project contents:"
+            ls -la
             exit 1
           fi
+          
+          # Собираем debug APK через Gradle
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
