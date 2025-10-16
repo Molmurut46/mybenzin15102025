@@ -471,6 +471,42 @@ export async function POST(req: NextRequest) {
       throw error
     }
 
+    // --- НОВЫЙ РЕЖИМ: удаление файлов ---
+    if (deleteFiles && filesToDelete) {
+      try {
+        const paths = JSON.parse(filesToDelete) as string[]
+        const result = await deleteFilesFromGithub(
+          octokit,
+          owner,
+          repo,
+          branch,
+          paths,
+          `🗑️ Remove ${paths.length} files from Orchids sync (${new Date().toISOString()}) [skip ci]`
+        )
+        
+        if (result) {
+          return NextResponse.json({
+            success: true,
+            deletedCount: result.deletedCount,
+            commitSha: result.commitSha,
+            commitUrl: result.commitUrl,
+            message: `Удалено ${result.deletedCount} файлов из репозитория`,
+          })
+        } else {
+          return NextResponse.json(
+            { error: "Не удалось удалить файлы" },
+            { status: 500 }
+          )
+        }
+      } catch (error: any) {
+        console.error("Delete files error:", error)
+        return NextResponse.json(
+          { error: "Ошибка удаления файлов", details: error?.message },
+          { status: 500 }
+        )
+      }
+    }
+
     // --- НОВЫЙ РЕЖИМ: финализация синхронизации (пустой коммит для триггера) ---
     if (finalizeSync) {
       try {
