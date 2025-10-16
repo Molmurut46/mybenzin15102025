@@ -1,0 +1,96 @@
+name: Распаковка проекта из ZIP
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '*.zip'
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Найти ZIP файлы
+        id: find-zip
+        run: |
+          ZIP_FILES=$(find . -maxdepth 1 -name "*.zip" -type f)
+          if [ -z "$ZIP_FILES" ]; then
+            echo "Нет ZIP файлов для распаковки"
+            exit 0
+          fi
+          echo "zip_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$ZIP_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Распаковать ZIP и обновить репозиторий
+        if: steps.find-zip.outputs.zip_files != ''
+        run: |
+          # Настройка git
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          
+          # Обработка каждого ZIP файла
+          for ZIP_FILE in *.zip; do
+            [ -f "$ZIP_FILE" ] || continue
+            
+            echo "Распаковка $ZIP_FILE..."
+            
+            # Создаём временную директорию
+            TEMP_DIR=$(mktemp -d)
+            
+            # Распаковываем в временную директорию
+            unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
+            
+            # Удаляем системные файлы
+            find "$TEMP_DIR" -name ".DS_Store" -type f -delete
+            find "$TEMP_DIR" -name "__MACOSX" -type d -exec rm -rf {} + 2>/dev/null || true
+            
+            # Копируем файлы в корень репозитория
+            # Если в ZIP есть одна корневая папка, извлекаем из неё
+            if [ $(ls -A "$TEMP_DIR" | wc -l) -eq 1 ] && [ -d "$TEMP_DIR"/* ]; then
+              ROOT_DIR=$(ls -A "$TEMP_DIR")
+              cp -rf "$TEMP_DIR/$ROOT_DIR"/* .
+              cp -rf "$TEMP_DIR/$ROOT_DIR"/.[!.]* . 2>/dev/null || true
+            else
+              cp -rf "$TEMP_DIR"/* .
+              cp -rf "$TEMP_DIR"/.[!.]* . 2>/dev/null || true
+            fi
+            
+            # Очистка
+            rm -rf "$TEMP_DIR"
+            
+            # Удаляем исходный ZIP
+            git rm "$ZIP_FILE"
+            
+            echo "✅ $ZIP_FILE распакован"
+          done
+          
+          # Добавляем все изменения
+          git add -A
+          
+          # Проверяем, есть ли изменения
+          if git diff --staged --quiet; then
+            echo "Нет изменений после распаковки"
+            exit 0
+          fi
+          
+          # Коммитим
+          git commit -m "🗜️ Автораспаковка проекта из ZIP [skip ci]"
+          
+          # Пушим изменения
+          git push
+      
+      - name: Результат
+        if: success()
+        run: echo "✅ Проект успешно распакован и обновлён"
