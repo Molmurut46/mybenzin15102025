@@ -10,7 +10,7 @@ on:
       website_url:
         description: "URL вашего сайта (для TWA/Bubblewrap)"
         required: false
-        default: "https://example.com"
+        default: "https://mybenzin15102025.vercel.app"
 
 jobs:
   web-ci:
@@ -39,7 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Java + Android SDK
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -49,7 +48,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # Setup Node.js для Bubblewrap
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -58,29 +56,27 @@ jobs:
       - name: Install Bubblewrap CLI
         run: npm i -g @bubblewrap/cli
 
-      # Создаем TWA проект
       - name: Generate TWA project
         env:
-          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://example.com' }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
         run: |
           echo "Using WEBSITE_URL=$WEBSITE_URL"
           
-          # Создаем минимальный twa.manifest.json
           mkdir -p twa-project
           cat > twa-project/twa-manifest.json <<EOF
           {
-            "packageId": "com.mybenzin.twa",
+            "packageId": "com.mybenzin.app",
             "host": "$WEBSITE_URL",
-            "name": "MyBenzin",
-            "launcherName": "MyBenzin",
+            "name": "Mybenzin",
+            "launcherName": "Mybenzin",
             "display": "standalone",
-            "themeColor": "#FFFFFF",
-            "navigationColor": "#000000",
+            "themeColor": "#3B82F6",
+            "navigationColor": "#1E40AF",
             "backgroundColor": "#FFFFFF",
-            "enableNotifications": false,
+            "enableNotifications": true,
             "startUrl": "/",
-            "iconUrl": "$WEBSITE_URL/icon.png",
-            "maskableIconUrl": "$WEBSITE_URL/icon.png",
+            "iconUrl": "$WEBSITE_URL/icon-512.png",
+            "maskableIconUrl": "$WEBSITE_URL/icon-512.png",
             "splashScreenFadeOutDuration": 300,
             "signingKey": {
               "path": "./android.keystore",
@@ -105,16 +101,13 @@ jobs:
       - name: Initialize Bubblewrap project
         working-directory: twa-project
         run: |
-          # Инициализируем проект из манифеста
           bubblewrap init --manifest=./twa-manifest.json || true
 
       - name: Build TWA debug APK
         working-directory: twa-project
         run: |
-          # Собираем debug APK (не требует подписи)
           bubblewrap build --skipPwaValidation || true
           
-          # Если bubblewrap build не сработал, используем gradle напрямую
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
@@ -123,7 +116,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
+          name: mybenzin-android-apk
           path: |
             twa-project/app-release-signed.apk
             twa-project/app/build/outputs/apk/**/*.apk
