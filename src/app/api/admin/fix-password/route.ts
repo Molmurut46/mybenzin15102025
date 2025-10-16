@@ -4,6 +4,8 @@ import { user, account } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
