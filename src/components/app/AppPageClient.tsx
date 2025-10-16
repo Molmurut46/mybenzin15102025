@@ -83,6 +83,9 @@ export const AppPageClient = () => {
   const [comparisonSummary, setComparisonSummary] = useState<ComparisonSummary | null>(null)
   const [showComparison, setShowComparison] = useState(false)
   
+  // New: delete files option
+  const [deleteRemovedFiles, setDeleteRemovedFiles] = useState(false)
+  
   const isPrivileged = useMemo(() => session?.user?.email === "89045219234@mail.ru", [session?.user?.email])
 
   useEffect(() => {
@@ -594,7 +597,10 @@ export const AppPageClient = () => {
         
         let uploadedCount = 0
         
-        for (const [relativePath, handle] of Object.entries(allFiles)) {
+        // ИСПРАВЛЕНО: используем правильный цикл с индексами
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          const relativePath = paths[i]
           const fileName = relativePath.split("/").pop() || ""
           
           if (
@@ -603,13 +609,13 @@ export const AppPageClient = () => {
             relativePath.includes(".next/") ||
             relativePath.startsWith("__MACOSX/") ||
             relativePath === ".DS_Store" ||
-            fileName.startsWith(".env") || // Игнорировать все .env* файлы
+            fileName.startsWith(".env") ||
             fileName === ".npmrc" ||
             fileName === ".yarnrc" ||
             fileName === ".yarnrc.yml" ||
-            fileName.endsWith(".key") || // Криптографические ключи
-            fileName.endsWith(".pem") || // SSL сертификаты
-            fileName.startsWith("secrets.") || // Файлы секретов
+            fileName.endsWith(".key") ||
+            fileName.endsWith(".pem") ||
+            fileName.startsWith("secrets.") ||
             fileName === ".secrets" ||
             relativePath === "bun.lock" ||
             relativePath === "package-lock.json"
@@ -617,10 +623,7 @@ export const AppPageClient = () => {
             continue
           }
           
-          const path = relativePath
-          const file = handle
-          
-          setSyncProgress({ current: uploadedCount + 1, total: files.length, currentFile: path })
+          setSyncProgress({ current: uploadedCount + 1, total: files.length, currentFile: relativePath })
           
           const formData = new FormData()
           formData.append("githubToken", githubToken)
@@ -629,7 +632,7 @@ export const AppPageClient = () => {
           formData.append("branch", refName || "main")
           formData.append("singleFile", "true")
           formData.append("file", file)
-          formData.append("path", path)
+          formData.append("path", relativePath)
           
           try {
             const response = await fetch("/api/app-build/upload-to-github", {
@@ -643,7 +646,7 @@ export const AppPageClient = () => {
               uploadedCount++
             }
           } catch (error) {
-            console.error(`Error uploading ${path}:`, error)
+            console.error(`Error uploading ${relativePath}:`, error)
           }
           
           if (uploadedCount < files.length - 1 && batchDelay > 0) {
@@ -659,8 +662,41 @@ export const AppPageClient = () => {
         // Определяем файлы для загрузки (новые + изменённые)
         const filesToUpload = [...comparison.new, ...comparison.changed]
         
+        // Удаляем файлы, если включена опция
+        if (deleteRemovedFiles && comparison.deleted.length > 0) {
+          toast.info(`Удаление ${comparison.deleted.length} файлов из репозитория...`)
+          
+          const deleteFormData = new FormData()
+          deleteFormData.append("githubToken", githubToken)
+          deleteFormData.append("owner", owner)
+          deleteFormData.append("repo", repo)
+          deleteFormData.append("branch", refName || "main")
+          deleteFormData.append("deleteFiles", "true")
+          deleteFormData.append("filesToDelete", JSON.stringify(comparison.deleted))
+          
+          try {
+            const deleteRes = await fetch("/api/app-build/upload-to-github", {
+              method: "POST",
+              body: deleteFormData,
+            })
+            
+            if (deleteRes.ok) {
+              const deleteData = await deleteRes.json()
+              toast.success(`Удалено ${deleteData.deletedCount || comparison.deleted.length} файлов`)
+            } else {
+              toast.error("Ошибка удаления файлов")
+            }
+          } catch (error) {
+            console.error("Delete error:", error)
+            toast.error("Ошибка удаления файлов")
+          }
+        }
+        
         if (filesToUpload.length === 0) {
-          toast.success("✅ Все файлы актуальны, загрузка не требуется")
+          const message = deleteRemovedFiles && comparison.deleted.length > 0
+            ? "✅ Все файлы актуальны"
+            : "✅ Все файлы актуальны, загрузка не требуется"
+          toast.success(message)
           setIsSyncing(false)
           setSyncProgress({ current: 0, total: 0, currentFile: "" })
           return
@@ -735,7 +771,10 @@ export const AppPageClient = () => {
           }
         }
 
-        toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${filesToUpload.length} файлов (пропущено ${comparison.unchanged.length} без изменений)`)
+        const deletedInfo = deleteRemovedFiles && comparison.deleted.length > 0 
+          ? `, удалено ${comparison.deleted.length}` 
+          : ""
+        toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${filesToUpload.length} файлов (пропущено ${comparison.unchanged.length} без изменений${deletedInfo})`)
       }
       
       // Финальный коммит
@@ -1220,6 +1259,33 @@ export const AppPageClient = () => {
               <p className="text-xs text-muted-foreground">
                 Рекомендуется 100-500 мс для избежания rate limits. 0 = максимальная скорость.
               </p>
+            </div>
+
+            {/* NEW: Delete files option */}
+            <div className="mb-3 p-3 bg-muted/50 rounded-lg space-y-2">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteRemovedFiles}
+                  onChange={(e) => setDeleteRemovedFiles(e.target.checked)}
+                  className="h-4 w-4"
+                  disabled={isSyncing}
+                />
+                <span className="font-medium">Удалять отсутствующие файлы из репозитория</span>
+              </label>
+              <p className="text-xs text-muted-foreground ml-6">
+                Если включено, файлы которые есть в GitHub, но отсутствуют локально, будут удалены из репозитория
+              </p>
+              {deleteRemovedFiles && comparisonSummary && comparisonSummary.deletedCount > 0 && (
+                <div className="ml-6 mt-2 p-2 bg-red-100 dark:bg-red-900/30 rounded text-sm">
+                  <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="font-semibold">
+                      Будет удалено {comparisonSummary.deletedCount} файлов
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {isSyncing && syncProgress.total > 0 && (
