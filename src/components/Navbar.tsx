@@ -59,7 +59,7 @@ export const Navbar = () => {
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-4 sm:space-x-8">
             <Link href="/" className="text-lg sm:text-xl font-bold truncate">
-              Отчёты по бензину
+              Mybenzin
             </Link>
             {session?.user && (
               <div className="hidden md:flex space-x-4">

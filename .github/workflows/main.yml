@@ -2,11 +2,11 @@ name: CI
 
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+  # push:
+  #   branches: [ main ]
+  # pull_request:
+  #   branches: [ main ]
+  workflow_dispatch:  # Только ручной запуск
     inputs:
       website_url:
         description: "URL вашего сайта (для TWA/Bubblewrap)"

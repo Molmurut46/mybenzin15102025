@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with rounded corners (maskable safe area) -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#1E40AF"/>
+    </linearGradient>
+    <clipPath id="r">
+      <rect x="64" y="64" width="896" height="896" rx="200" ry="200" />
+    </clipPath>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#g)"/>
+
+  <g clip-path="url(#r)">
+    <!-- Subtle inner glow ring -->
+    <circle cx="512" cy="512" r="360" fill="url(#g)" opacity="0.15"/>
+
+    <!-- Symbol: fuel drop + gauge tick -->
+    <g transform="translate(0,10)">
+      <!-- Drop -->
+      <path d="M512 252 C470 324 392 431 372 500 C348 583 400 676 512 676 C624 676 676 583 652 500 C632 431 554 324 512 252 Z" fill="#FFFFFF"/>
+      <!-- Gauge tick -->
+      <path d="M512 430 L640 370" stroke="#1E40AF" stroke-width="28" stroke-linecap="round" opacity="0.9"/>
+    </g>
+
+    <!-- Monogram MB -->
+    <g fill="#ffffff" opacity="0.9" transform="translate(0,20)">
+      <path d="M338 740 L338 560 L370 560 L420 650 L470 560 L502 560 L502 740 L470 740 L470 620 L420 708 L370 620 L370 740 Z"/>
+      <path d="M540 740 L540 560 L640 560 C690 560 720 588 720 632 C720 676 690 704 640 704 L580 704 L580 740 ZM580 672 L638 672 C668 672 680 660 680 632 C680 604 668 592 638 592 L580 592 Z"/>
+    </g>
+  </g>
+
+  <!-- Small border for crisp edges on various backgrounds -->
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" stroke="#0B1F4B" stroke-opacity="0.15" stroke-width="8" fill="none"/>
+</svg>

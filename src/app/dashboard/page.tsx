@@ -1307,7 +1307,7 @@ export default function DashboardPage() {
                 >
                   <ArrowUpDown className="w-4 h-4" />
                 </Button>
-                <Select value={sortMode} onValueChange={(value: SortMode) => setSortMode(value)}>
+                <Select value={sortMode} onValueChange={(value: string) => setSortMode(value as SortMode)}>
                   <SelectTrigger className="w-full sm:w-[200px]">
                     <SelectValue />
                   </SelectTrigger>
