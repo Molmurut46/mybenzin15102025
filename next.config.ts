@@ -1,20 +1,14 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 
-// const LOADER = path.resolve(__dirname, 'src/visual-edits/component-tagger-loader.js');
+const LOADER = path.resolve(__dirname, 'src/visual-edits/component-tagger-loader.js');
+
 
 const nextConfig: NextConfig = {
+  // Добавляем поддержку для Capacitor
+  output: process.env.CAPACITOR_BUILD === 'true' ? 'export' : undefined,
   images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
-      {
-        protocol: 'http',
-        hostname: '**',
-      },
-    ],
+    unoptimized: process.env.CAPACITOR_BUILD === 'true',
   },
   // outputFileTracingRoot: path.resolve(__dirname, '../../'),
   typescript: {
@@ -40,4 +34,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-// Orchids restart: 1760617740738
+// Orchids restart: 1760623943257
