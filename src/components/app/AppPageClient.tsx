@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useSession } from "@/lib/auth-client"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2 } from "lucide-react"
+import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2, Clock } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -62,6 +62,8 @@ export const AppPageClient = () => {
   const [manualFolderMode, setManualFolderMode] = useState(false)
   const [selectedFolderFiles, setSelectedFolderFiles] = useState<File[]>([])
   const [isSyncing, setIsSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, currentFile: "" })
+  const [batchDelay, setBatchDelay] = useState(100) // ms between files
   
   const isPrivileged = useMemo(() => session?.user?.email === "89045219234@mail.ru", [session?.user?.email])
 
@@ -443,6 +445,7 @@ export const AppPageClient = () => {
     }
 
     setIsSyncing(true)
+    setSyncProgress({ current: 0, total: 0, currentFile: "" })
     
     try {
       // Шаг 1: Скачать ZIP проекта
@@ -502,48 +505,80 @@ export const AppPageClient = () => {
       }
       
       toast.info(`Подготовлено файлов: ${files.length}`)
+      setSyncProgress({ current: 0, total: files.length, currentFile: "" })
       
-      // Шаг 3: Загрузить на GitHub
+      // Шаг 3: Загрузить на GitHub постепенно
       toast.info("Загрузка на GitHub...")
       
+      let uploadedCount = 0
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const path = paths[i]
+        
+        setSyncProgress({ current: i + 1, total: files.length, currentFile: path })
+        
+        const formData = new FormData()
+        formData.append("githubToken", githubToken)
+        formData.append("owner", owner)
+        formData.append("repo", repo)
+        formData.append("branch", refName || "main")
+        formData.append("singleFile", "true")
+        formData.append("file", file)
+        formData.append("path", path)
+        
+        try {
+          const response = await fetch("/api/app-build/upload-to-github", {
+            method: "POST",
+            body: formData,
+          })
+          
+          const data = await response.json()
+          
+          if (!response.ok) {
+            console.error(`Failed to upload ${path}:`, data.error)
+            // Продолжаем загрузку остальных файлов
+          } else {
+            uploadedCount++
+          }
+        } catch (error) {
+          console.error(`Error uploading ${path}:`, error)
+          // Продолжаем загрузку остальных файлов
+        }
+        
+        // Задержка между файлами
+        if (i < files.length - 1 && batchDelay > 0) {
+          await new Promise(resolve => setTimeout(resolve, batchDelay))
+        }
+      }
+
+      toast.success(`✅ Синхронизация завершена: ${uploadedCount} из ${files.length} файлов`)
+      
+      // Финальный коммит для завершения синхронизации
       const formData = new FormData()
       formData.append("githubToken", githubToken)
       formData.append("owner", owner)
       formData.append("repo", repo)
       formData.append("branch", refName || "main")
-      formData.append("autoMode", "false")
-      formData.append("uploadAsZip", "false")
-      formData.append("manualFolder", "true")
-      formData.append("replaceAll", "true")
+      formData.append("finalizeSync", "true")
       
-      files.forEach((file) => {
-        formData.append("folderFiles", file)
-      })
-      
-      paths.forEach((path) => {
-        formData.append("paths[]", path)
-      })
-
-      const response = await fetch("/api/app-build/upload-to-github", {
+      const finalRes = await fetch("/api/app-build/upload-to-github", {
         method: "POST",
         body: formData,
       })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || "Ошибка загрузки")
-      }
-
-      toast.success(`✅ Синхронизация завершена: ${data.filesUploaded} файлов`)
-      if (data.commitUrl) {
-        window.open(data.commitUrl, "_blank")
+      
+      if (finalRes.ok) {
+        const finalData = await finalRes.json()
+        if (finalData.commitUrl) {
+          window.open(finalData.commitUrl, "_blank")
+        }
       }
     } catch (error: any) {
       console.error("Sync error:", error)
       toast.error(error.message || "Ошибка синхронизации с GitHub")
     } finally {
       setIsSyncing(false)
+      setSyncProgress({ current: 0, total: 0, currentFile: "" })
     }
   }
 
@@ -847,8 +882,55 @@ export const AppPageClient = () => {
           {/* Sync Button - обходит ограничения Vercel */}
           <div className="pt-2 border-t">
             <div className="mb-2 text-sm text-muted-foreground">
-              <strong>Синхронизация (рекомендуется для Vercel):</strong> скачивает проект, распаковывает в браузере и загружает все файлы на GitHub с полной заменой
+              <strong>Синхронизация (рекомендуется для Vercel):</strong> скачивает проект, распаковывает в браузере и загружает файлы постепенно на GitHub
             </div>
+            
+            {/* Batch delay setting */}
+            <div className="mb-3 space-y-2">
+              <Label htmlFor="batch-delay" className="flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                Задержка между файлами (мс)
+              </Label>
+              <Input
+                id="batch-delay"
+                type="number"
+                min="0"
+                max="5000"
+                step="50"
+                value={batchDelay}
+                onChange={(e) => setBatchDelay(Number(e.target.value))}
+                disabled={isSyncing}
+              />
+              <p className="text-xs text-muted-foreground">
+                Рекомендуется 100-500 мс для избежания rate limits. 0 = максимальная скорость.
+              </p>
+            </div>
+
+            {/* Progress bar */}
+            {isSyncing && syncProgress.total > 0 && (
+              <div className="mb-3 space-y-2 p-3 bg-muted rounded-lg">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">
+                    Загружено: {syncProgress.current} / {syncProgress.total}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {Math.round((syncProgress.current / syncProgress.total) * 100)}%
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded bg-background">
+                  <div 
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
+                  />
+                </div>
+                {syncProgress.currentFile && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    {syncProgress.currentFile}
+                  </p>
+                )}
+              </div>
+            )}
+            
             <Button
               onClick={handleSync}
               disabled={isSyncing || !githubToken || !owner || !repo}
