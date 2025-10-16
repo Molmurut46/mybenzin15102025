@@ -354,6 +354,69 @@ async function commitZipAsSingleFile(
   }
 }
 
+// Helper to delete files from GitHub
+async function deleteFilesFromGithub(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branch: string,
+  filePaths: string[],
+  commitMessage: string
+) {
+  if (filePaths.length === 0) return null
+
+  const treeData = await getCurrentTree(octokit, owner, repo, branch)
+  if (!treeData) return null
+
+  // Get current tree recursively
+  const { data: currentTree } = await octokit.git.getTree({
+    owner,
+    repo,
+    tree_sha: treeData.baseTreeSha,
+    recursive: "true",
+  })
+
+  // Create new tree without deleted files
+  const newTreeItems = currentTree.tree
+    .filter((item) => item.type === "blob" && item.path && !filePaths.includes(item.path))
+    .map((item) => ({
+      path: item.path!,
+      mode: item.mode as "100644" | "100755" | "040000" | "160000" | "120000",
+      type: item.type as "blob" | "tree" | "commit",
+      sha: item.sha!,
+    }))
+
+  // Create new tree
+  const { data: newTree } = await octokit.git.createTree({
+    owner,
+    repo,
+    tree: newTreeItems,
+  })
+
+  // Create commit
+  const { data: newCommit } = await octokit.git.createCommit({
+    owner,
+    repo,
+    message: commitMessage,
+    tree: newTree.sha,
+    parents: [treeData.parentSha],
+  })
+
+  // Update reference
+  await octokit.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha,
+  })
+
+  return {
+    commitSha: newCommit.sha,
+    commitUrl: `https://github.com/${owner}/${repo}/commit/${newCommit.sha}`,
+    deletedCount: filePaths.length,
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -370,6 +433,8 @@ export async function POST(req: NextRequest) {
     const singleFile = formData.get("singleFile") === "true"
     const finalizeSync = formData.get("finalizeSync") === "true"
     const compareOnly = formData.get("compareOnly") === "true"
+    const deleteFiles = formData.get("deleteFiles") === "true"
+    const filesToDelete = formData.get("filesToDelete") as string | null
 
     if (!githubToken || !owner || !repo) {
       return NextResponse.json(
