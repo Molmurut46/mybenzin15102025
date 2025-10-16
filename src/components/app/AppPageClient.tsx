@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useSession } from "@/lib/auth-client"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2, Clock, FileSearch, FilePlus, FileEdit, FileX } from "lucide-react"
+import { Smartphone, Play, Download, ExternalLink, RefreshCcw, AlertCircle, FileText, Settings, Upload, Check, Zap, Loader2, Clock, FileSearch, FilePlus, FileEdit, FileX, Package } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -86,6 +86,9 @@ export const AppPageClient = () => {
   // New: delete files option
   const [deleteRemovedFiles, setDeleteRemovedFiles] = useState(false)
   
+  // NEW: Build method selection
+  const [buildMethod, setBuildMethod] = useState<"capacitor" | "twa">("capacitor")
+  
   const isPrivileged = useMemo(() => session?.user?.email === "89045219234@mail.ru", [session?.user?.email])
 
   useEffect(() => {
@@ -152,6 +155,15 @@ export const AppPageClient = () => {
     }
 
     loadEnvSettings()
+    
+    // NEW: Set workflow ID based on build method from localStorage
+    const savedMethod = localStorage.getItem("build_method") as "capacitor" | "twa" | null
+    if (savedMethod) {
+      setBuildMethod(savedMethod)
+      const wfId = savedMethod === "capacitor" ? "android-capacitor.yml" : "main.yml"
+      setWorkflowId(wfId)
+      localStorage.setItem("gh_workflowId", wfId)
+    }
   }, [])
 
   useEffect(() => {
@@ -805,6 +817,16 @@ export const AppPageClient = () => {
     }
   }
 
+  // NEW: Update workflow ID when build method changes
+  const handleBuildMethodChange = (method: "capacitor" | "twa") => {
+    setBuildMethod(method)
+    const wfId = method === "capacitor" ? "android-capacitor.yml" : "main.yml"
+    setWorkflowId(wfId)
+    localStorage.setItem("build_method", method)
+    localStorage.setItem("gh_workflowId", wfId)
+    toast.success(`Выбран метод: ${method === "capacitor" ? "Capacitor" : "TWA"}`)
+  }
+
   if (isPending) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center text-muted-foreground">Загрузка…</div>
@@ -839,11 +861,109 @@ export const AppPageClient = () => {
             </p>
             <div className="flex items-center gap-2 mt-2">
               <FileText className="w-4 h-4" />
-              <span className="text-sm">См. <code className="bg-muted px-1 py-0.5 rounded">GITHUB_ACTIONS_SETUP.md</code> для инструкций по настройке</span>
+              <span className="text-sm">См. <code className="bg-muted px-1 py-0.5 rounded">ANDROID_APK_GUIDE.md</code> для инструкций по настройке</span>
             </div>
           </AlertDescription>
         </Alert>
       )}
+
+      {/* NEW: Build Method Selection Card */}
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Package className="w-5 h-5" />
+            Выбор типа сборки APK
+          </CardTitle>
+          <CardDescription>
+            Выберите метод создания Android приложения
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Capacitor Card */}
+            <button
+              onClick={() => handleBuildMethodChange("capacitor")}
+              className={`p-4 rounded-lg border-2 transition-all text-left ${
+                buildMethod === "capacitor"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50"
+              }`}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="font-semibold text-lg">Capacitor</h3>
+                {buildMethod === "capacitor" && (
+                  <Badge variant="default" className="gap-1">
+                    <Check className="w-3 h-3" />
+                    Выбрано
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">
+                Полноценное нативное приложение с доступом к API Android
+              </p>
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Нативные функции</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Офлайн режим</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Лучшая производительность</span>
+                </div>
+              </div>
+            </button>
+
+            {/* TWA Card */}
+            <button
+              onClick={() => handleBuildMethodChange("twa")}
+              className={`p-4 rounded-lg border-2 transition-all text-left ${
+                buildMethod === "twa"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50"
+              }`}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="font-semibold text-lg">TWA (Bubblewrap)</h3>
+                {buildMethod === "twa" && (
+                  <Badge variant="default" className="gap-1">
+                    <Check className="w-3 h-3" />
+                    Выбрано
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">
+                Упаковка веб-сайта в Android приложение
+              </p>
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Быстрая настройка</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Автообновления</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  <span>Меньший размер</span>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <Alert>
+            <FileText className="h-4 w-4" />
+            <AlertTitle>Документация</AlertTitle>
+            <AlertDescription>
+              Подробное руководство по обоим методам см. в файле <code className="bg-muted px-1 py-0.5 rounded">ANDROID_APK_GUIDE.md</code>
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
 
       {/* GitHub Upload Section */}
       <Card>
