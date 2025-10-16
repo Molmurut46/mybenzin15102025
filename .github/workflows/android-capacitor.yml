@@ -26,12 +26,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Next.js app
+      - name: Build Next.js app (static export)
         run: npm run build
         env:
           NODE_ENV: production
           CAPACITOR_BUILD: true
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL || 'https://mybenzin.vercel.app' }}
+
+      - name: Verify out directory
+        run: |
+          echo "Checking out directory..."
+          ls -la out/ || echo "❌ out/ directory not found"
+          echo "✅ Static export completed"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -42,33 +48,41 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Capacitor CLI
-        run: npm install -g @capacitor/cli
-
       - name: Add Android platform
-        run: npx cap add android || echo "Android platform already exists"
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            echo "Android platform already exists"
+          fi
 
       - name: Sync Capacitor
         run: npx cap sync android
+
+      - name: Verify Android project
+        run: |
+          echo "Checking android directory..."
+          ls -la android/
+          echo "Checking gradlew..."
+          ls -la android/gradlew
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
       - name: Build Android APK
-        run: cd android && ./gradlew assembleRelease
+        run: cd android && ./gradlew assembleRelease --stacktrace
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
-      - name: Sign APK (optional)
-        if: ${{ secrets.KEYSTORE_FILE && secrets.KEYSTORE_PASSWORD }}
+      - name: Verify APK
         run: |
-          echo "Signing APK..."
-          # Add signing steps here if you have keystore
+          echo "Looking for APK files..."
+          find android/app/build/outputs -name "*.apk" -type f
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mybenzin-app
+          name: mybenzin-capacitor-app
           path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
 
@@ -76,22 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mybenzin-bundle
+          name: mybenzin-capacitor-bundle
           path: android/app/build/outputs/bundle/release/*.aab
           retention-days: 30
-        continue-on-error: true
-
-      - name: Create Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Release v${{ github.run_number }}
-          files: |
-            android/app/build/outputs/apk/release/*.apk
-            android/app/build/outputs/bundle/release/*.aab
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
