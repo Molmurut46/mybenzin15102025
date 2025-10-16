@@ -1,58 +1,68 @@
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+name: Android CI
 
-  # Java + Android SDK
-  - name: Setup Java 17
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: '17'
-      cache: gradle
+on:
+  workflow_dispatch: {}
+  # Если нужно собирать по пушу в main — раскомментируйте:
+  # push:
+  #   branches: [ main ]
 
-  - name: Setup Android SDK
-    uses: android-actions/setup-android@v3
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-  - name: Accept Android licenses
-    run: yes | sdkmanager --licenses
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # Gradle cache по android/**, а не по корню
-  - name: Cache Gradle
-    uses: actions/cache@v4
-    with:
-      path: |
-        ~/.gradle/caches
-        ~/.gradle/wrapper
-      key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
-      restore-keys: |
-        ${{ runner.os }}-gradle-
+      # Java + Android SDK
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
 
-  # Если у вас в этом же репо Next.js — это CI для Android не трогает Node.
-  # Capacitor-папка android уже должна быть закоммичена (после `npx cap add android` локально).
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-  - name: Make gradlew executable
-    run: chmod +x ./gradlew
-    working-directory: android
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses
 
-  - name: Build release (APK + AAB)
-    working-directory: android
-    run: |
-      ./gradlew assembleRelease
-      ./gradlew bundleRelease
+      # Gradle cache по android/**, а не по корню
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-  # Загружаем артефакты. Не валим job, если файлов нет.
-  - name: Upload APK (release)
-    uses: actions/upload-artifact@v4
-    with:
-      name: android-apk-${{ github.run_number }}
-      path: android/app/build/outputs/apk/release/*.apk
-      if-no-files-found: warn
-      retention-days: 7
+      # Папка android с gradle wrapper должна быть закоммичена
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        working-directory: android
 
-  - name: Upload AAB (release)
-    uses: actions/upload-artifact@v4
-    with:
-      name: android-aab-${{ github.run_number }}
-      path: android/app/build/outputs/bundle/release/*.aab
-      if-no-files-found: warn
-      retention-days: 7
+      - name: Build release (APK + AAB)
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease --no-daemon
+          ./gradlew bundleRelease --no-daemon
+
+      # Загружаем артефакты. Не валим job, если файлов нет.
+      - name: Upload APK (release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload AAB (release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab-${{ github.run_number }}
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: warn
+          retention-days: 7
