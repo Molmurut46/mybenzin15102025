@@ -257,6 +257,8 @@ export async function POST(request: NextRequest) {
     const zipNameInput = (formData.get("zipName") as string) || ""
     const manualFolder = formData.get("manualFolder") === "true"
     const replaceAll = formData.get("replaceAll") === "true"
+    const singleFile = formData.get("singleFile") === "true"
+    const finalizeSync = formData.get("finalizeSync") === "true"
 
     if (!githubToken || !owner || !repo) {
       return NextResponse.json(
@@ -291,6 +293,131 @@ export async function POST(request: NextRequest) {
         )
       }
       throw error
+    }
+
+    // --- НОВЫЙ РЕЖИМ: финализация синхронизации (пустой коммит для триггера) ---
+    if (finalizeSync) {
+      try {
+        const treeData = await getCurrentTree(octokit, owner, repo, branch)
+        if (!treeData) {
+          return NextResponse.json({ success: true, message: "Синхронизация завершена" })
+        }
+
+        const { data: newCommit } = await octokit.git.createCommit({
+          owner,
+          repo,
+          message: `🔄 Sync completed from Orchids (${new Date().toISOString()}) [skip ci]`,
+          tree: treeData.baseTreeSha,
+          parents: [treeData.parentSha],
+        })
+
+        await octokit.git.updateRef({
+          owner,
+          repo,
+          ref: `heads/${branch}`,
+          sha: newCommit.sha,
+        })
+
+        return NextResponse.json({
+          success: true,
+          commitSha: newCommit.sha,
+          commitUrl: `https://github.com/${owner}/${repo}/commit/${newCommit.sha}`,
+          message: "Синхронизация завершена",
+        })
+      } catch (error: any) {
+        console.error("Finalize sync error:", error)
+        return NextResponse.json({ success: true, message: "Синхронизация завершена (без финального коммита)" })
+      }
+    }
+
+    // --- НОВЫЙ РЕЖИМ: загрузка одного файла ---
+    if (singleFile) {
+      const file = formData.get("file") as File | null
+      const filePath = formData.get("path") as string
+
+      if (!file || !filePath) {
+        return NextResponse.json(
+          { error: "Отсутствует файл или путь для режима singleFile" },
+          { status: 400 }
+        )
+      }
+
+      const isBinary = isBinaryFile(filePath) || (file.type && !file.type.startsWith("text/"))
+      let content: string
+      let encoding: "utf-8" | "base64"
+
+      if (isBinary) {
+        const ab = await file.arrayBuffer()
+        content = Buffer.from(ab).toString("base64")
+        encoding = "base64"
+      } else {
+        content = await file.text()
+        encoding = "utf-8"
+      }
+
+      try {
+        const treeData = await getCurrentTree(octokit, owner, repo, branch)
+
+        const { data: blob } = await octokit.git.createBlob({
+          owner,
+          repo,
+          content,
+          encoding,
+        })
+
+        const { data: newTree } = await octokit.git.createTree({
+          owner,
+          repo,
+          base_tree: treeData?.baseTreeSha,
+          tree: [
+            {
+              path: filePath,
+              mode: "100644",
+              type: "blob",
+              sha: blob.sha,
+            },
+          ],
+        })
+
+        // Создаём коммит для каждого файла
+        const { data: newCommit } = await octokit.git.createCommit({
+          owner,
+          repo,
+          message: `Update ${filePath} [skip ci]`,
+          tree: newTree.sha,
+          parents: treeData ? [treeData.parentSha] : [],
+        })
+
+        // Обновляем ссылку
+        if (treeData) {
+          await octokit.git.updateRef({
+            owner,
+            repo,
+            ref: `heads/${branch}`,
+            sha: newCommit.sha,
+          })
+        } else {
+          await octokit.git.createRef({
+            owner,
+            repo,
+            ref: `refs/heads/${branch}`,
+            sha: newCommit.sha,
+          })
+        }
+        
+        return NextResponse.json({
+          success: true,
+          file: filePath,
+          commitSha: newCommit.sha,
+          message: `Файл ${filePath} загружен`,
+        })
+      } catch (error: any) {
+        console.error(`Error uploading single file ${filePath}:`, error)
+        return NextResponse.json(
+          { error: `Ошибка загрузки файла ${filePath}`, details: error?.message },
+          { status: 500 }
+        )
+      }
     }
 
     // --- ПРИОРИТЕТ: ручная загрузка распакованных файлов (папка) ---
