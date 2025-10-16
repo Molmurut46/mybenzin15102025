@@ -39,6 +39,9 @@ async function readProjectFiles(dir: string, baseDir: string = dir): Promise<Fil
     ".env.local",
     ".env.production",
     ".env.development",
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
     "bun.lock",
     "package-lock.json"
   ]
@@ -56,6 +59,16 @@ async function readProjectFiles(dir: string, baseDir: string = dir): Promise<Fil
         files.push(...subFiles)
       } else {
         if (excludeFiles.includes(entry.name)) continue
+        // Игнорировать файлы с потенциальными секретами
+        if (
+          entry.name.startsWith(".env") ||
+          entry.name.endsWith(".key") ||
+          entry.name.endsWith(".pem") ||
+          entry.name.startsWith("secrets.") ||
+          entry.name === ".secrets"
+        ) {
+          continue
+        }
         
         if (isBinaryFile(entry.name)) {
           const content = await fs.promises.readFile(fullPath, "base64")
