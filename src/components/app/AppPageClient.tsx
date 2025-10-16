@@ -538,6 +538,13 @@ export const AppPageClient = () => {
           relativePath.startsWith("__MACOSX/") ||
           relativePath === ".DS_Store" ||
           fileName.startsWith(".env") || // Игнорировать все .env* файлы
+          fileName === ".npmrc" ||
+          fileName === ".yarnrc" ||
+          fileName === ".yarnrc.yml" ||
+          fileName.endsWith(".key") || // Криптографические ключи
+          fileName.endsWith(".pem") || // SSL сертификаты
+          fileName.startsWith("secrets.") || // Файлы секретов
+          fileName === ".secrets" ||
           relativePath === "bun.lock" ||
           relativePath === "package-lock.json"
         ) {
@@ -587,11 +594,33 @@ export const AppPageClient = () => {
         
         let uploadedCount = 0
         
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i]
-          const path = paths[i]
+        for (const [relativePath, handle] of Object.entries(allFiles)) {
+          const fileName = relativePath.split("/").pop() || ""
           
-          setSyncProgress({ current: i + 1, total: files.length, currentFile: path })
+          if (
+            relativePath.includes("node_modules/") ||
+            relativePath.includes(".git/") ||
+            relativePath.includes(".next/") ||
+            relativePath.startsWith("__MACOSX/") ||
+            relativePath === ".DS_Store" ||
+            fileName.startsWith(".env") || // Игнорировать все .env* файлы
+            fileName === ".npmrc" ||
+            fileName === ".yarnrc" ||
+            fileName === ".yarnrc.yml" ||
+            fileName.endsWith(".key") || // Криптографические ключи
+            fileName.endsWith(".pem") || // SSL сертификаты
+            fileName.startsWith("secrets.") || // Файлы секретов
+            fileName === ".secrets" ||
+            relativePath === "bun.lock" ||
+            relativePath === "package-lock.json"
+          ) {
+            continue
+          }
+          
+          const path = relativePath
+          const file = handle
+          
+          setSyncProgress({ current: uploadedCount + 1, total: files.length, currentFile: path })
           
           const formData = new FormData()
           formData.append("githubToken", githubToken)
@@ -617,7 +646,7 @@ export const AppPageClient = () => {
             console.error(`Error uploading ${path}:`, error)
           }
           
-          if (i < files.length - 1 && batchDelay > 0) {
+          if (uploadedCount < files.length - 1 && batchDelay > 0) {
             await new Promise(resolve => setTimeout(resolve, batchDelay))
           }
         }
@@ -642,19 +671,38 @@ export const AppPageClient = () => {
         
         let uploadedCount = 0
         
-        // Загружаем только изменённые файлы
-        for (let i = 0; i < filesToUpload.length; i++) {
-          const filePath = filesToUpload[i]
-          const fileIndex = allPaths.indexOf(filePath)
+        // Загружаем только изменённые файлы (используем индексы для правильного доступа к путям)
+        for (let i = 0; i < allFiles.length; i++) {
+          const file = allFiles[i]
+          const relativePath = allPaths[i]
+          const fileName = relativePath.split("/").pop() || ""
           
-          if (fileIndex === -1) {
-            console.error(`File not found in archive: ${filePath}`)
+          if (
+            relativePath.includes("node_modules/") ||
+            relativePath.includes(".git/") ||
+            relativePath.includes(".next/") ||
+            relativePath.startsWith("__MACOSX/") ||
+            relativePath === ".DS_Store" ||
+            fileName.startsWith(".env") ||
+            fileName === ".npmrc" ||
+            fileName === ".yarnrc" ||
+            fileName === ".yarnrc.yml" ||
+            fileName.endsWith(".key") ||
+            fileName.endsWith(".pem") ||
+            fileName.startsWith("secrets.") ||
+            fileName === ".secrets" ||
+            relativePath === "bun.lock" ||
+            relativePath === "package-lock.json"
+          ) {
             continue
           }
           
-          const file = allFiles[fileIndex]
+          // КРИТИЧНО: Загружаем ТОЛЬКО если файл в списке изменённых
+          if (!filesToUpload.includes(relativePath)) {
+            continue // Пропускаем неизменённые файлы
+          }
           
-          setSyncProgress({ current: i + 1, total: filesToUpload.length, currentFile: filePath })
+          setSyncProgress({ current: uploadedCount + 1, total: filesToUpload.length, currentFile: relativePath })
           
           const formData = new FormData()
           formData.append("githubToken", githubToken)
@@ -663,7 +711,7 @@ export const AppPageClient = () => {
           formData.append("branch", refName || "main")
           formData.append("singleFile", "true")
           formData.append("file", file)
-          formData.append("path", filePath)
+          formData.append("path", relativePath)
           
           try {
             const response = await fetch("/api/app-build/upload-to-github", {
@@ -676,13 +724,13 @@ export const AppPageClient = () => {
             if (response.ok) {
               uploadedCount++
             } else {
-              console.error(`Failed to upload ${filePath}:`, data.error)
+              console.error(`Failed to upload ${relativePath}:`, data.error)
             }
           } catch (error) {
-            console.error(`Error uploading ${filePath}:`, error)
+            console.error(`Error uploading ${relativePath}:`, error)
           }
           
-          if (i < filesToUpload.length - 1 && batchDelay > 0) {
+          if (uploadedCount < filesToUpload.length - 1 && batchDelay > 0) {
             await new Promise(resolve => setTimeout(resolve, batchDelay))
           }
         }
