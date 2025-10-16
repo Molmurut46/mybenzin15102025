@@ -6,7 +6,7 @@ on:
       website_url:
         description: "URL вашего сайта (для TWA/Bubblewrap)"
         required: false
-        default: "https://mybenzin.vercel.app"
+        default: "https://mybenzin15102025.vercel.app"
 
 jobs:
   web-ci:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Generate TWA project
         env:
-          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin.vercel.app' }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
         run: |
           echo "Using WEBSITE_URL=$WEBSITE_URL"
           
@@ -100,7 +100,7 @@ jobs:
 
       - name: Check if icon exists
         env:
-          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin.vercel.app' }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
         continue-on-error: true
         run: |
           ICON_URL="$WEBSITE_URL/icon-512.png"
@@ -114,7 +114,7 @@ jobs:
         working-directory: twa-project
         run: |
           export CI=true
-          printf "n\n$JAVA_HOME\n" | bubblewrap init --manifest=./twa-manifest.json
+          yes | head -n 10 | bubblewrap init --manifest=./twa-manifest.json || true
           
           ls -la
           if [ -f "./gradlew" ]; then
