@@ -114,7 +114,7 @@ jobs:
         working-directory: twa-project
         run: |
           export CI=true
-          yes | head -n 10 | bubblewrap init --manifest=./twa-manifest.json || true
+          yes n | head -n 20 | bubblewrap init --manifest=./twa-manifest.json || true
           
           ls -la
           if [ -f "./gradlew" ]; then
