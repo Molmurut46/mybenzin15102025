@@ -72,74 +72,68 @@ jobs:
         run: |
           echo "Using WEBSITE_URL=$WEBSITE_URL"
           
-          # Создаем минимальный twa.manifest.json
+          # Создаем рабочую директорию
           mkdir -p twa-project
-          cat > twa-project/twa-manifest.json <<EOF
-          {
-            "packageId": "com.mybenzin.app",
-            "host": "$WEBSITE_URL",
-            "name": "Mybenzin",
-            "launcherName": "Mybenzin",
-            "display": "standalone",
-            "themeColor": "#3B82F6",
-            "navigationColor": "#1E40AF",
-            "backgroundColor": "#FFFFFF",
-            "enableNotifications": true,
-            "startUrl": "/",
-            "iconUrl": "$WEBSITE_URL/icon-512.png",
-            "maskableIconUrl": "$WEBSITE_URL/icon-512.png",
-            "monochromeIconUrl": "$WEBSITE_URL/icon-512.png",
-            "splashScreenFadeOutDuration": 300,
-            "signingKey": {
-              "path": "./android.keystore",
-              "alias": "android"
-            },
-            "appVersionName": "1.0.0",
-            "appVersionCode": 1,
-            "shortcuts": [],
-            "generatorApp": "bubblewrap-cli",
-            "webManifestUrl": "$WEBSITE_URL/manifest.json",
-            "fallbackType": "customtabs",
-            "features": {},
-            "alphaDependencies": {
-              "enabled": false
-            },
-            "enableSiteSettingsShortcut": true,
-            "isChromeOSOnly": false,
-            "isMetaQuest": false
-          }
-          EOF
+          cd twa-project
 
       - name: Initialize Bubblewrap project
         working-directory: twa-project
         env:
           JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://mybenzin15102025.vercel.app' }}
         run: |
-          # Автоматически отвечаем "n" на вопрос о JDK
-          echo "n" | bubblewrap init --manifest=./twa-manifest.json || true
+          # Автоматически отвечаем на вопросы bubblewrap init
+          # URL, packageId, appName, launcherName, JDK install (n)
+          echo "Initializing Bubblewrap project..."
+          printf "$WEBSITE_URL\ncom.mybenzin.app\nMybenzin\nMybenzin\nn\n" | bubblewrap init --directory=. || true
+          
+          # Проверяем, создался ли gradlew
+          if [ ! -f "gradlew" ]; then
+            echo "ERROR: Bubblewrap init failed to create Android project"
+            echo "Trying alternative approach..."
+            
+            # Пробуем с явным указанием manifest URL
+            printf "$WEBSITE_URL/manifest.json\ncom.mybenzin.app\nMybenzin\nMybenzin\nn\n" | bubblewrap init --directory=. || true
+          fi
+          
+          # Финальная проверка
+          if [ -f "gradlew" ]; then
+            echo "✓ Bubblewrap project created successfully"
+            ls -la
+          else
+            echo "✗ Failed to create Bubblewrap project"
+            echo "Directory contents:"
+            ls -la
+            exit 1
+          fi
 
       - name: Build TWA debug APK
         working-directory: twa-project
         env:
           JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         run: |
-          # Проверяем, что gradlew создан
-          if [ ! -f "./gradlew" ]; then
-            echo "Error: gradlew not found after bubblewrap init"
-            echo "Listing twa-project contents:"
-            ls -la
-            exit 1
-          fi
+          echo "Building debug APK..."
           
-          # Собираем debug APK через Gradle
+          # Даем права на выполнение gradlew
           chmod +x ./gradlew
+          
+          # Собираем debug APK
           ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK artifact
+      - name: List build outputs
+        run: |
+          echo "=== Listing all APK files ==="
+          find . -name "*.apk" -type f || echo "No APK files found"
+          
+          echo ""
+          echo "=== Listing build outputs directory ==="
+          ls -laR twa-project/app/build/outputs/ || echo "Build outputs directory not found"
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mybenzin-android-apk
+          name: mybenzin-android-debug-apk
           path: |
             twa-project/app/build/outputs/apk/debug/*.apk
-            twa-project/app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+            twa-project/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
