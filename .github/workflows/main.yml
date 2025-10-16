@@ -1,28 +1,131 @@
 name: CI
 
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-
+    inputs:
+      website_url:
+        description: "URL вашего сайта (для TWA/Bubblewrap fallback)"
+        required: false
+        default: "https://example.com"
 
 jobs:
-  build:
+  web-ci:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-    
-    - name: Install dependencies
-      run: npm install --legacy-peer-deps
-    
-    - name: Run tests
-      run: echo "Tests would run here"
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run tests
+        run: echo "Tests would run here"
+
+  android-apk:
+    runs-on: ubuntu-latest
+    needs: web-ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java + Android SDK
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Gradle cache (если есть Gradle-проект)
+      - name: Setup Gradle
+        if: ${{ hashFiles('**/gradlew') != '' }}
+        uses: gradle/actions/setup-gradle@v4
+
+      # Ветка 1: есть Android/Gradle-проект в репо
+      - name: Grant execute permission for Gradle
+        if: ${{ hashFiles('**/gradlew') != '' }}
+        run: chmod +x ./gradlew || true
+
+      - name: Build APK (assembleRelease если настроен, иначе Debug)
+        if: ${{ hashFiles('**/gradlew') != '' }}
+        run: |
+          if ./gradlew tasks --all | grep -q "assembleRelease"; then
+            ./gradlew assembleRelease --stacktrace
+          else
+            ./gradlew assembleDebug --stacktrace
+          fi
+
+      - name: Upload APK artifact (Gradle)
+        if: ${{ hashFiles('**/gradlew') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            **/outputs/apk/**/*.apk
+            **/outputs/bundle/**/*.aab
+          if-no-files-found: warn
+
+      # Ветка 2 (fallback): Gradle-проекта нет — генерируем TWA через Bubblewrap и собираем debug-APK
+      - name: Setup Node.js (for Bubblewrap)
+        if: ${{ hashFiles('**/gradlew') == '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Bubblewrap CLI
+        if: ${{ hashFiles('**/gradlew') == '' }}
+        run: npm i -g @bubblewrap/cli
+
+      - name: Generate TWA project (Bubblewrap)
+        if: ${{ hashFiles('**/gradlew') == '' }}
+        env:
+          WEBSITE_URL: ${{ github.event.inputs.website_url || 'https://example.com' }}
+        run: |
+          echo "Using WEBSITE_URL=$WEBSITE_URL"
+          # Пытаемся взять PWA manifest, если нет — всё равно инициализируем проект
+          bubblewrap init \
+            --manifest="$WEBSITE_URL/manifest.json" \
+            --directory twa \
+            --skipPwaValidation \
+            --skipSigning || true
+
+          # Если init не создал проект (манифеста нет), создадим минимальный через CLI промпт-флаги
+          if [ ! -d "twa" ]; then
+            npx -y @bubblewrap/cli init \
+              --directory twa \
+              --skipPwaValidation \
+              --skipSigning <<EOF || true
+$WEBSITE_URL
+my.twa.app
+My TWA App
+My Company
+EOF
+          fi
+
+      - name: Build TWA debug APK
+        if: ${{ hashFiles('**/gradlew') == '' }}
+        working-directory: twa
+        run: |
+          # У Bubblewrap-проекта есть свой gradlew
+          chmod +x ./gradlew || true
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK artifact (Bubblewrap)
+        if: ${{ hashFiles('**/gradlew') == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            **/outputs/apk/**/*.apk
+            **/outputs/bundle/**/*.aab
+          if-no-files-found: warn
